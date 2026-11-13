@@ -2,9 +2,9 @@ name: Build Windows x64 (RadiAnt UX Edition)
 
 on:
   push:
-    branches: [ master, feature/radiant-ux-suite ]
+    branches: [ '**' ]
   pull_request:
-    branches: [ master ]
+    branches: [ '**' ]
   workflow_dispatch:
 
 jobs:
@@ -34,7 +34,7 @@ jobs:
       uses: actions/cache@v3
       with:
         path: ${{ runner.workspace }}/itk-install
-        key: ${{ runner.os }}-itk-5.3.0-msvc2022
+        key: ${{ runner.os }}-itk-5.3.0-modular-msvc2022
 
     - name: Build ITK (if not cached)
       if: steps.cache-itk.outputs.cache-hit != 'true'
@@ -48,6 +48,15 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release \
           -DBUILD_EXAMPLES=OFF \
           -DBUILD_TESTING=OFF \
+          -DITK_BUILD_DEFAULT_MODULES=OFF \
+          -DModule_ITKCommon=ON \
+          -DModule_ITKImageFilterBase=ON \
+          -DModule_ITKImageFunction=ON \
+          -DModule_ITKImageGrid=ON \
+          -DModule_ITKImageIntensity=ON \
+          -DModule_ITKSpatialObjects=ON \
+          -DModule_ITKStatistics=ON \
+          -DModule_ITKTransform=ON \
           -DCMAKE_INSTALL_PREFIX="${{ runner.workspace }}/itk-install" \
           ../itk-src
         cmake --build . --config Release --target install --parallel 4
@@ -72,7 +81,7 @@ jobs:
     - name: Package Artifacts
       shell: bash
       run: |
-        mkdir -p package/platforms package/imageformats package/sqldrivers package/styles
+        mkdir -p package
         cp build/bin/Release/aliza.exe package/
         windeployqt package/aliza.exe --no-translations --compiler-runtime
         cd package && 7z a ../aliza-radiant-windows-x64.zip *

@@ -76,6 +76,12 @@ public:
 	QAction * actionStudyChecked;
 	QAction * actionStudyEmpty;
 
+signals:
+	void open_series_split(int);
+
+protected:
+	bool eventFilter(QObject*, QEvent*) override;
+
 private slots:
 	void toggle_info(bool);
 	void toggle_contours(bool);

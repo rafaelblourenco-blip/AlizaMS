@@ -1,5 +1,6 @@
 #include "graphicsview.h"
 #include "graphicswidget.h"
+#include "radiantinputdispatcher.h"
 #include <QtGlobal>
 #include <QColor>
 #include <QRectF>
@@ -151,29 +152,101 @@ GraphicsView::~GraphicsView()
 
 void GraphicsView::keyPressEvent(QKeyEvent * e)
 {
+	const bool ctrl = (e->modifiers() & Qt::ControlModifier);
+
+	if (ctrl)
+	{
+		switch (e->key())
+		{
+		case Qt::Key_0:
+			// Fit to panel (Ctrl+0)
+			parent->update_image(1, false);
+			update_selection_rect_width();
+			return;
+		case Qt::Key_1:
+			// Zoom 100% (1:1) (Ctrl+1)
+			m_scale = 1.0;
+			setTransform(QTransform());
+			update_selection_rect_width();
+			return;
+		case Qt::Key_2:
+			// Zoom 200% (Ctrl+2)
+			m_scale = 2.0;
+			setTransform(QTransform().scale(2.0, 2.0));
+			update_selection_rect_width();
+			return;
+		case Qt::Key_3:
+			// Zoom 400% (Ctrl+3)
+			m_scale = 4.0;
+			setTransform(QTransform().scale(4.0, 4.0));
+			update_selection_rect_width();
+			return;
+		case Qt::Key_4:
+			// Zoom 800% (Ctrl+4)
+			m_scale = 8.0;
+			setTransform(QTransform().scale(8.0, 8.0));
+			update_selection_rect_width();
+			return;
+		case Qt::Key_F11:
+			if (parent && parent->get_aliza())
+			{
+				parent->get_aliza()->show_custom_wl_dialog(this);
+			}
+			return;
+		default:
+			break;
+		}
+	}
+	else
+	{
+		switch (e->key())
+		{
+		case Qt::Key_0:
+			if (parent && parent->get_aliza()) parent->get_aliza()->apply_wl_preset(0);
+			return;
+		case Qt::Key_1:
+			if (parent && parent->get_aliza()) parent->get_aliza()->apply_wl_preset(1);
+			return;
+		case Qt::Key_2:
+			if (parent && parent->get_aliza()) parent->get_aliza()->apply_wl_preset(2);
+			return;
+		case Qt::Key_3:
+			if (parent && parent->get_aliza()) parent->get_aliza()->apply_wl_preset(3);
+			return;
+		case Qt::Key_4:
+			if (parent && parent->get_aliza()) parent->get_aliza()->apply_wl_preset(4);
+			return;
+		case Qt::Key_5:
+			if (parent && parent->get_aliza()) parent->get_aliza()->apply_wl_preset(5);
+			return;
+		case Qt::Key_6:
+			if (parent && parent->get_aliza()) parent->get_aliza()->apply_wl_preset(6);
+			return;
+		case Qt::Key_7:
+			if (parent && parent->get_aliza()) parent->get_aliza()->apply_wl_preset(7);
+			return;
+		case Qt::Key_8:
+			if (parent && parent->get_aliza()) parent->get_aliza()->apply_wl_preset(8);
+			return;
+		case Qt::Key_9:
+			if (parent && parent->get_aliza()) parent->get_aliza()->apply_wl_preset(9);
+			return;
+		case Qt::Key_F11:
+			if (parent && parent->get_aliza()) parent->get_aliza()->toggle_invert_lut();
+			return;
+		default:
+			break;
+		}
+	}
+
 	switch (e->key())
 	{
 	case Qt::Key_Plus:
-		zoom_in();
-		break;
 	case Qt::Key_Equal:
 		zoom_in();
 		break;
 	case Qt::Key_Minus:
 		zoom_out();
-		break;
-	case Qt::Key_0:
-		{
-			parent->update_image(1, false);
-			update_selection_rect_width();
-		}
-		break;
-	case Qt::Key_1:
-		{
-			m_scale = 1.0;
-			parent->update_image(0, false);
-			update_selection_rect_width();
-		}
 		break;
 	case Qt::Key_X:
 		flipX();
@@ -181,16 +254,8 @@ void GraphicsView::keyPressEvent(QKeyEvent * e)
 	case Qt::Key_Y:
 		flipY();
 		break;
-	case Qt::Key_F:
-		{
-			parent->update_image(1, false);
-			update_selection_rect_width();
-		}
-		break;
 	case Qt::Key_G:
 		parent->get_screen();
-		break;
-	case Qt::Key_C:
 		break;
 	case Qt::Key_P:
 		parent->show_image_info();
@@ -220,6 +285,10 @@ void GraphicsView::keyReleaseEvent(QKeyEvent * e)
 
 void GraphicsView::wheelEvent(QWheelEvent * e)
 {
+	if (RadiantInputDispatcher::instance()->handle_wheel(this, e, parent))
+	{
+		return;
+	}
 #if QT_VERSION >= QT_VERSION_CHECK(5,0,0)
 	scale_view(pow(2.0, -e->angleDelta().y() / 480.0));
 #else
@@ -232,10 +301,156 @@ void GraphicsView::drawBackground(QPainter * painter, const QRectF & rect)
 	QGraphicsView::drawBackground(painter, rect);
 }
 
+bool GraphicsView::s_show_hud = true;
+bool GraphicsView::s_anonymous_mode = false;
+
+void GraphicsView::toggle_hud_display()
+{
+	s_show_hud = !s_show_hud;
+}
+
+void GraphicsView::toggle_anonymous_display()
+{
+	s_anonymous_mode = !s_anonymous_mode;
+}
+
+bool GraphicsView::is_hud_visible()
+{
+	return s_show_hud;
+}
+
+bool GraphicsView::is_anonymous_mode()
+{
+	return s_anonymous_mode;
+}
+
 void GraphicsView::drawForeground(QPainter * painter, const QRectF & rect)
 {
 	Q_UNUSED(rect);
-	Q_UNUSED(painter);
+	if (!s_show_hud) return;
+	if (!parent || !parent->image_container.image3D) return;
+
+	const ImageVariant * iv = parent->image_container.image3D;
+	if (!iv || !iv->di) return;
+
+	painter->save();
+	painter->resetTransform();
+
+	const QRect vr = viewport()->rect();
+	const int margin = 12;
+	const int lineHeight = 16;
+	QFont font = painter->font();
+	font.setFamily("Segoe UI");
+	font.setPointSize(9);
+	font.setBold(true);
+	painter->setFont(font);
+
+	auto drawShadow = [&](int x, int y, const QString & text) {
+		if (text.isEmpty()) return;
+		painter->setPen(QColor(0, 0, 0, 240));
+		painter->drawText(x + 1, y + 1, text);
+		painter->drawText(x - 1, y + 1, text);
+		painter->drawText(x + 1, y - 1, text);
+		painter->drawText(x - 1, y - 1, text);
+		painter->setPen(QColor(230, 230, 230));
+		painter->drawText(x, y, text);
+	};
+
+	auto drawShadowRight = [&](int y, const QString & text) {
+		if (text.isEmpty()) return;
+#if QT_VERSION >= QT_VERSION_CHECK(5, 11, 0)
+		const int textWidth = painter->fontMetrics().horizontalAdvance(text);
+#else
+		const int textWidth = painter->fontMetrics().width(text);
+#endif
+		drawShadow(vr.right() - margin - textWidth, y, text);
+	};
+
+	// 1. TOP-LEFT: Patient Name / ID (ocultável via Shift+F12), Data, Série
+	int tl_y = vr.top() + margin + lineHeight;
+	QString patText = s_anonymous_mode ? QString("[ANÔNIMO]") : (iv->pat_name.isEmpty() ? iv->pat_id : iv->pat_name);
+	if (!patText.isEmpty())
+	{
+		drawShadow(vr.left() + margin, tl_y, patText);
+		tl_y += lineHeight;
+	}
+
+	if (!s_anonymous_mode && !iv->pat_id.isEmpty())
+	{
+		drawShadow(vr.left() + margin, tl_y, QString("ID: ") + iv->pat_id);
+		tl_y += lineHeight;
+	}
+
+	if (!iv->study_date.isEmpty())
+	{
+		drawShadow(vr.left() + margin, tl_y, iv->study_date);
+		tl_y += lineHeight;
+	}
+
+	if (!iv->series_description.isEmpty())
+	{
+		drawShadow(vr.left() + margin, tl_y, iv->series_description);
+		tl_y += lineHeight;
+	}
+
+	// 2. TOP-RIGHT: Instituição, Modalidade, Parâmetros de aquisição
+	int tr_y = vr.top() + margin + lineHeight;
+	if (!iv->institution.isEmpty())
+	{
+		drawShadowRight(tr_y, iv->institution);
+		tr_y += lineHeight;
+	}
+
+	if (!iv->modality.isEmpty())
+	{
+		drawShadowRight(tr_y, iv->modality);
+		tr_y += lineHeight;
+	}
+
+	if (!iv->hardware_info.isEmpty())
+	{
+		drawShadowRight(tr_y, iv->hardware_info);
+		tr_y += lineHeight;
+	}
+	else if (!iv->mrtimes.isEmpty())
+	{
+		drawShadowRight(tr_y, iv->mrtimes);
+		tr_y += lineHeight;
+	}
+
+	// 3. BOTTOM-LEFT: Im: X/Y, Posição (Loc: Z mm), Espessura (Thk: X mm), Zoom
+	int bl_y = vr.bottom() - margin;
+	const int zoomPercent = static_cast<int>(std::round(transform().m11() * 100.0));
+	drawShadow(vr.left() + margin, bl_y, QString("Zoom: %1%").arg(zoomPercent));
+	bl_y -= lineHeight;
+
+	if (iv->di->iz_spacing > 0.0)
+	{
+		drawShadow(vr.left() + margin, bl_y, QString::asprintf("Thk: %.1f mm", iv->di->iz_spacing));
+		bl_y -= lineHeight;
+	}
+
+	const double sliceLoc = iv->di->iz_origin + (iv->di->selected_z_slice * iv->di->iz_spacing);
+	drawShadow(vr.left() + margin, bl_y, QString::asprintf("Loc: %.1f mm", sliceLoc));
+	bl_y -= lineHeight;
+
+	const int curSlice = iv->di->selected_z_slice + 1;
+	const int totalSlices = std::max(1, iv->di->idimz);
+	drawShadow(vr.left() + margin, bl_y, QString("Im: %1/%2").arg(curSlice).arg(totalSlices));
+
+	// 4. BOTTOM-RIGHT: WL: X WW: Y e leitura dinâmica de HU sob o cursor
+	int br_y = vr.bottom() - margin;
+	if (parent->info_line && !parent->info_line->text().isEmpty())
+	{
+		drawShadowRight(br_y, parent->info_line->text());
+		br_y -= lineHeight;
+	}
+
+	const int curWL = static_cast<int>(std::round(iv->di->us_window_center));
+	const int curWW = static_cast<int>(std::round(iv->di->us_window_width));
+	drawShadowRight(br_y, QString("WL: %1  WW: %2").arg(curWL).arg(curWW));
+
+	painter->restore();
 }
 
 void GraphicsView::scale_view(double scale_factor)
@@ -425,70 +640,33 @@ void GraphicsView::clear_shutters()
 
 void GraphicsView::mousePressEvent(QMouseEvent * e)
 {
-	if (e->button() == Qt::RightButton)
+	if (RadiantInputDispatcher::instance()->handle_mouse_press(this, e, parent))
 	{
-		if (parent->slider_m)
-		{
-			int tmp0;
-			if (Qt::ControlModifier == QApplication::keyboardModifiers())
-			{
-				tmp0 = parent->slider_m->slices_slider->value() - 1;
-			}
-			else
-			{
-				tmp0 = parent->slider_m->slices_slider->value() + 1;
-			}
-			if (tmp0 < 0) tmp0 = parent->slider_m->slices_slider->maximum();
-			if (tmp0 > parent->slider_m->slices_slider->maximum()) tmp0 = 0;
-			parent->slider_m->set_slice(tmp0);
-		}
+		return;
 	}
-	else if (e->button() == Qt::MiddleButton)
+
+	if (e->button() == Qt::ForwardButton ||
+	    (RadiantInputDispatcher::instance()->get_tool() == RadiantTool::Length && e->button() == Qt::LeftButton) ||
+	    parent->get_mouse_modus() == 2)
 	{
+		m0_set = true;
+		m1_set = false;
 		const QPoint p0 = e->pos();
 		const QPointF p1 = mapToScene(p0);
-		if (parent->get_show_cursor())
-		{
-			get_pixel_value2(p1.x(), p1.y());
-		}
-		else
-		{
-			get_pixel_value(p1.x(), p1.y());
-		}
+		m0_win_pos_x = p1.x();
+		m0_win_pos_y = p1.y();
+		measure();
+		return;
 	}
-	else if (e->button() == Qt::LeftButton)
+
+	if (e->button() == Qt::LeftButton && parent->get_mouse_modus() == 1)
 	{
-		switch (parent->get_mouse_modus())
-		{
-		case 1:
-			{
-				const QPoint p0 = e->pos();
-				lines_at(p0.x(), p0.y());
-			}
-			break;
-		case 2:
-			{
-				m0_set = true;
-				m1_set = false;
-				const QPoint p0 = e->pos();
-				const QPointF p1 = mapToScene(p0);
-				m0_win_pos_x = p1.x();
-				m0_win_pos_y = p1.y();
-				measure();
-			}
-			break;
-		case 4:
-		case 5:
-		case 6:
-		default:
-			QGraphicsView::mousePressEvent(e);
-			break;
-		}
+		const QPoint p0 = e->pos();
+		lines_at(p0.x(), p0.y());
+		return;
 	}
-	else
-	{
-		QGraphicsView::mousePressEvent(e);
-	}
+
+	QGraphicsView::mousePressEvent(e);
 }
 
 void GraphicsView::mouseDoubleClickEvent(QMouseEvent * e)
@@ -498,128 +676,101 @@ void GraphicsView::mouseDoubleClickEvent(QMouseEvent * e)
 
 void GraphicsView::mouseReleaseEvent(QMouseEvent * e)
 {
-	if (e->button() == Qt::LeftButton)
+	if (RadiantInputDispatcher::instance()->handle_mouse_release(this, e, parent))
 	{
-		switch (parent->get_mouse_modus())
+		return;
+	}
+
+	if (m0_set && (e->button() == Qt::LeftButton || e->button() == Qt::ForwardButton))
+	{
+		m1_set = true;
+		const QPoint p0 = e->pos();
+		const QPointF p1 = mapToScene(p0);
+		m1_win_pos_x = p1.x();
+		m1_win_pos_y = p1.y();
+		if (QApplication::keyboardModifiers() & Qt::ShiftModifier)
 		{
-		case 1:
+			const double dx = m1_win_pos_x - m0_win_pos_x;
+			const double dy = m1_win_pos_y - m0_win_pos_y;
+			const double adx = std::abs(dx);
+			const double ady = std::abs(dy);
+			if (adx > 2.0 * ady)
+				m1_win_pos_y = m0_win_pos_y;
+			else if (ady > 2.0 * adx)
+				m1_win_pos_x = m0_win_pos_x;
+			else
 			{
-				const QPoint p0 = e->pos();
-				lines_at(p0.x(), p0.y());
+				const double dist = std::max(adx, ady);
+				m1_win_pos_x = m0_win_pos_x + ((dx >= 0) ? dist : -dist);
+				m1_win_pos_y = m0_win_pos_y + ((dy >= 0) ? dist : -dist);
 			}
-			break;
-		case 2:
-			{
-				m0_set = true;
-				m1_set = true;
-				const QPoint p0 = e->pos();
-				const QPointF p1 = mapToScene(p0);
-				m1_win_pos_x = p1.x();
-				m1_win_pos_y = p1.y();
-				measure();
-				m0_set = false;
-				m1_set = false;
-			}
-			break;
-		case 4:
-		case 5:
-		default:
-			QGraphicsView::mouseReleaseEvent(e);
-			break;
 		}
+		measure();
+		m0_set = false;
+		m1_set = false;
+		return;
 	}
-	else if (e->button() == Qt::MiddleButton)
+
+	if (e->button() == Qt::LeftButton && parent->get_mouse_modus() == 1)
 	{
-		get_pixel_value(-1, -1);
+		const QPoint p0 = e->pos();
+		lines_at(p0.x(), p0.y());
+		return;
 	}
-	else
-	{
-		QGraphicsView::mouseReleaseEvent(e);
-	}
+
+	QGraphicsView::mouseReleaseEvent(e);
 }
 
 void GraphicsView::mouseMoveEvent(QMouseEvent * e)
 {
-	const short mm = parent->get_mouse_modus();
-	if (parent->get_show_cursor() && !(e->buttons() & Qt::MiddleButton))
+	if (parent->get_show_cursor())
 	{
 		const QPoint p0 = e->pos();
 		const QPointF p1 = mapToScene(p0);
 		get_pixel_value(p1.x(), p1.y());
 	}
-	if (e->buttons() & Qt::RightButton)
+
+	if (RadiantInputDispatcher::instance()->handle_mouse_move(this, e, parent))
 	{
-		const QPoint p0 = e->pos();
-		set_win_old_position(new_win_pos_x, new_win_pos_y);
-		set_win_new_position(p0.x(), p0.y());
-		if (parent->slider_m)
-		{
-			const int tmp0 = old_win_pos_x-new_win_pos_x;
-			int tmp1;
-			if (tmp0 > 0)
-			{
-				tmp1 = parent->slider_m->slices_slider->value() - 1;
-			}
-			else
-			{
-				tmp1 = parent->slider_m->slices_slider->value() + 1;
-			}
-			if (tmp1 < 0) tmp1 = 0;
-			if (tmp1 > parent->slider_m->slices_slider->maximum())
-			{
-				tmp1 = parent->slider_m->slices_slider->maximum();
-			}
-			parent->slider_m->set_slice(tmp1);
-		}
+		return;
 	}
-	else if (e->buttons() & Qt::MiddleButton)
+
+	if (m0_set && (e->buttons() & (Qt::LeftButton | Qt::ForwardButton)))
 	{
+		m1_set = true;
 		const QPoint p0 = e->pos();
 		const QPointF p1 = mapToScene(p0);
-		if (parent->get_show_cursor())
+		m1_win_pos_x = p1.x();
+		m1_win_pos_y = p1.y();
+		if (QApplication::keyboardModifiers() & Qt::ShiftModifier)
 		{
-			get_pixel_value2(p1.x(), p1.y());
-		}
-		else
-		{
-			get_pixel_value(p1.x(), p1.y());
-		}
-	}
-	else if (e->buttons() & Qt::LeftButton)
-	{
-		switch (mm)
-		{
-		case 1:
+			const double dx = m1_win_pos_x - m0_win_pos_x;
+			const double dy = m1_win_pos_y - m0_win_pos_y;
+			const double adx = std::abs(dx);
+			const double ady = std::abs(dy);
+			if (adx > 2.0 * ady)
+				m1_win_pos_y = m0_win_pos_y;
+			else if (ady > 2.0 * adx)
+				m1_win_pos_x = m0_win_pos_x;
+			else
 			{
-				const QPoint p0 = e->pos();
-				lines_at(p0.x(), p0.y());
+				const double dist = std::max(adx, ady);
+				m1_win_pos_x = m0_win_pos_x + ((dx >= 0) ? dist : -dist);
+				m1_win_pos_y = m0_win_pos_y + ((dy >= 0) ? dist : -dist);
 			}
-			break;
-		case 2:
-			{
-				if (m0_set == true)
-				{
-					m1_set = true;
-					const QPoint p0 = e->pos();
-					const QPointF p1 = mapToScene(p0);
-					m1_win_pos_x = p1.x();
-					m1_win_pos_y = p1.y();
-					measure();
-				}
-			}
-			break;
-		case 4:
-		case 5:
-		case 6:
-		default:
-			QGraphicsView::mouseMoveEvent(e);
-			break;
 		}
+		measure();
+		return;
 	}
-	else
+
+	if ((e->buttons() & Qt::LeftButton) && parent->get_mouse_modus() == 1)
 	{
-		QGraphicsView::mouseMoveEvent(e);
+		const QPoint p0 = e->pos();
+		lines_at(p0.x(), p0.y());
+		return;
 	}
+
+	QGraphicsView::mouseMoveEvent(e);
 }
 
 void GraphicsView::flip()
@@ -1036,6 +1187,30 @@ void GraphicsView::flipY()
 {
 	global_flip_y = !global_flip_y;
 	parent->update_image(0, false);
+}
+
+void GraphicsView::rotate_cw()
+{
+	rotation_angle = (rotation_angle + 90) % 360;
+	if (parent && !parent->run__)
+		parent->update_image(0, false);
+}
+
+void GraphicsView::rotate_ccw()
+{
+	rotation_angle = (rotation_angle + 270) % 360;
+	if (parent && !parent->run__)
+		parent->update_image(0, false);
+}
+
+void GraphicsView::reset_transformations()
+{
+	rotation_angle = 0;
+	global_flip_x = false;
+	global_flip_y = false;
+	setTransform(QTransform());
+	if (parent && !parent->run__)
+		parent->update_image(0, false);
 }
 
 void GraphicsView::draw_prtexts(const ImageVariant * ivariant)

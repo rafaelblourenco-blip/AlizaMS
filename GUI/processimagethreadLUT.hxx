@@ -168,11 +168,12 @@ public:
 					// else y = ((x - c) / w + 0.5) * (ymax - ymin) + ymin
 					r = ((v - window_center) / div_) + 0.5;
 				}
+				const double r_eff = alt_mode ? (1.0 - r) : r;
 				switch (lut)
 				{
 				case 0:
 					{
-						const unsigned char c = static_cast<unsigned char>(UCHAR_MAX * r);
+						const unsigned char c = static_cast<unsigned char>(UCHAR_MAX * r_eff);
 						p[j]     = c;
 						p[j + 1] = c;
 						p[j + 2] = c;
@@ -186,7 +187,7 @@ public:
 				case 6:
 				case 7:
 					{
-						int z = static_cast<int>(r * tmp__size);
+						int z = static_cast<int>(r_eff * tmp__size);
 						if (z < 0) z = 0;
 						if (z > (tmp__size - 1)) z = tmp__size - 1;
 						p[j]     = tmp_p1[z * 3];
@@ -214,9 +215,10 @@ public:
 				{
 				case 0:
 					{
-						p[j]     = 0;
-						p[j + 1] = 0;
-						p[j + 2] = 0;
+						const unsigned char c = alt_mode ? UCHAR_MAX : 0;
+						p[j]     = c;
+						p[j + 1] = c;
+						p[j + 2] = c;
 					}
 					break;
 				case 1:
@@ -228,9 +230,10 @@ public:
 				case 7:
 				case 8:
 					{
-						p[j]     = tmp_p1[0];
-						p[j + 1] = tmp_p1[1];
-						p[j + 2] = tmp_p1[2];
+						const unsigned int z = alt_mode ? (tmp__size - 1) : 0;
+						p[j]     = tmp_p1[z * 3];
+						p[j + 1] = tmp_p1[z * 3 + 1];
+						p[j + 2] = tmp_p1[z * 3 + 2];
 					}
 					break;
 				default:
@@ -242,17 +245,11 @@ public:
 				switch (lut)
 				{
 				case 0:
-					if (alt_mode)
 					{
-						p[j]     = 0;
-						p[j + 1] = 0;
-						p[j + 2] = 0;
-					}
-					else
-					{
-						p[j]     = UCHAR_MAX;
-						p[j + 1] = UCHAR_MAX;
-						p[j + 2] = UCHAR_MAX;
+						const unsigned char c = alt_mode ? 0 : UCHAR_MAX;
+						p[j]     = c;
+						p[j + 1] = c;
+						p[j + 2] = c;
 					}
 					break;
 				case 1:
@@ -263,15 +260,8 @@ public:
 				case 6:
 				case 7:
 				case 8:
-					if (alt_mode)
 					{
-						p[j]     = tmp_p1[0];
-						p[j + 1] = tmp_p1[1];
-						p[j + 2] = tmp_p1[2];
-					}
-					else
-					{
-						const unsigned int z = tmp__size - 1;
+						const unsigned int z = alt_mode ? 0 : (tmp__size - 1);
 						p[j]     = tmp_p1[z * 3];
 						p[j + 1] = tmp_p1[z * 3 + 1];
 						p[j + 2] = tmp_p1[z * 3 + 2];

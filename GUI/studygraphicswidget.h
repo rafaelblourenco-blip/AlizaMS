@@ -37,8 +37,11 @@ public:
 	void set_id(int);
 	int  get_id() const;
 	void set_studyview(StudyViewWidget*);
+	StudyViewWidget * get_studyview() const { return studyview; }
 	void set_aliza(Aliza*);
+	Aliza * get_aliza() const { return aliza; }
 	void set_slider(QSlider*);
+	QSlider * get_slider() const { return slider; }
 	void set_top_label(QLabel*);
 	void set_left_label(QLabel*);
 	void set_measure_label(QLabel*);
@@ -63,6 +66,8 @@ public:
 	void  update_pr_area();
 	void  update_background_color();
 	void  set_smooth(bool);
+	void  set_alt_mode(bool t);
+	bool  get_alt_mode() const { return alt_mode; }
 	bool  get_smooth() const;
 	void  set_mouse_modus(short,bool);
 	short get_mouse_modus() const;
@@ -103,6 +108,7 @@ private:
 	short  mouse_modus{};
 	bool   enable_shutter{true};
 	bool   enable_overlays{true};
+	bool   alt_mode{false};
 };
 
 #endif

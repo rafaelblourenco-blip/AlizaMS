@@ -78,6 +78,7 @@
 		<file>bitmaps/f2.svg</file>
 		<file>bitmaps/zoomin.svg</file>
 		<file>bitmaps/zoomout.svg</file>
+		<file>GUI/dark_radiant.qss</file>
 	</qresource>
 </RCC>
 

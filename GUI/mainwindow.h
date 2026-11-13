@@ -43,9 +43,12 @@
 #include "browser/anonymazerwidget2.h"
 #include "aliza.h"
 
+class RadiantShortcutsManager;
+
 class MainWindow : public QMainWindow, private Ui::MainWindow
 {
 Q_OBJECT
+	friend class RadiantShortcutsManager;
 public:
     MainWindow(
 		bool /*3D*/,
@@ -135,6 +138,7 @@ private slots:
 	void trigger_studyview_checked();
 	void trigger_studyview_empty();
 	void trigger_default_settings();
+	RadiantShortcutsManager * get_radiant_shortcuts_manager() const { return radiant_shortcuts_mgr; }
 
 signals:
 	void quit_app();
@@ -266,6 +270,7 @@ private:
 	QIcon nocut_icon;
 	QIcon anchor_icon;
 	QIcon anchor2_icon;
+	RadiantShortcutsManager * radiant_shortcuts_mgr{nullptr};
 };
 
 #endif

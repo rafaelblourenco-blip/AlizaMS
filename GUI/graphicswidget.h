@@ -43,6 +43,7 @@ public:
 	void set_measure_label(QLabel*);
 	void set_info_line(QLineEdit*);
 	void set_aliza(Aliza*);
+	Aliza * get_aliza() const { return aliza; }
 	int  get_axis() const { return axis; }
 	void start_animation();
 	void stop_animation();

@@ -608,6 +608,8 @@ template<typename T> void load_rgb_image(
 	else if (flip_x)      t = t.scale(-1.0,  1.0);
 	if (global_flip_x)    t = t.scale(-1.0,  1.0);
 	if (global_flip_y)    t = t.scale( 1.0, -1.0);
+	if (widget->graphicsview->rotation_angle != 0)
+		t.rotate(widget->graphicsview->rotation_angle);
 	//
 	const QRectF rectf(0, 0, size[0], size[1]);
 	widget->graphicsview->scene()->setSceneRect(rectf);
@@ -618,6 +620,25 @@ template<typename T> void load_rgb_image(
 	widget->graphicsview->draw_prgraphics(ivariant);
 	widget->graphicsview->draw_prtexts(ivariant);
 	//
+	if (widget->graphicsview->rotation_angle == 90)
+	{
+		const QString old_top = top_string;
+		const QString old_left = left_string;
+		top_string = old_left;
+		left_string = GraphicsUtils::flip_label(old_top);
+	}
+	else if (widget->graphicsview->rotation_angle == 180)
+	{
+		top_string = GraphicsUtils::flip_label(top_string);
+		left_string = GraphicsUtils::flip_label(left_string);
+	}
+	else if (widget->graphicsview->rotation_angle == 270)
+	{
+		const QString old_top = top_string;
+		const QString old_left = left_string;
+		top_string = GraphicsUtils::flip_label(old_left);
+		left_string = old_top;
+	}
 	widget->set_top_label_text(top_string);
 	widget->set_left_label_text(left_string);
 	widget->graphicsview->setTransform(t);
@@ -1023,6 +1044,8 @@ template<typename T> void load_rgb_char_image(
 	else if (flip_x)      t = t.scale(-1.0,  1.0);
 	if (global_flip_x)    t = t.scale(-1.0,  1.0);
 	if (global_flip_y)    t = t.scale( 1.0, -1.0);
+	if (widget->graphicsview->rotation_angle != 0)
+		t.rotate(widget->graphicsview->rotation_angle);
 	//
 	const QRectF rectf(0, 0, size[0], size[1]);
 	widget->graphicsview->scene()->setSceneRect(rectf);
@@ -1033,6 +1056,25 @@ template<typename T> void load_rgb_char_image(
 	widget->graphicsview->draw_prgraphics(ivariant);
 	widget->graphicsview->draw_prtexts(ivariant);
 	//
+	if (widget->graphicsview->rotation_angle == 90)
+	{
+		const QString old_top = top_string;
+		const QString old_left = left_string;
+		top_string = old_left;
+		left_string = GraphicsUtils::flip_label(old_top);
+	}
+	else if (widget->graphicsview->rotation_angle == 180)
+	{
+		top_string = GraphicsUtils::flip_label(top_string);
+		left_string = GraphicsUtils::flip_label(left_string);
+	}
+	else if (widget->graphicsview->rotation_angle == 270)
+	{
+		const QString old_top = top_string;
+		const QString old_left = left_string;
+		top_string = GraphicsUtils::flip_label(old_left);
+		left_string = old_top;
+	}
 	widget->set_top_label_text(top_string);
 	widget->set_left_label_text(left_string);
 	widget->graphicsview->setTransform(t);
@@ -1204,6 +1246,8 @@ template<typename T> void load_rgba_char_image(
 	else if (flip_x)      t = t.scale(-1.0,  1.0);
 	if (global_flip_x)    t = t.scale(-1.0,  1.0);
 	if (global_flip_y)    t = t.scale( 1.0, -1.0);
+	if (widget->graphicsview->rotation_angle != 0)
+		t.rotate(widget->graphicsview->rotation_angle);
 	//
 	const QRectF rectf(0, 0, size[0], size[1]);
 	widget->graphicsview->scene()->setSceneRect(rectf);
@@ -1214,6 +1258,25 @@ template<typename T> void load_rgba_char_image(
 	widget->graphicsview->draw_prgraphics(ivariant);
 	widget->graphicsview->draw_prtexts(ivariant);
 	//
+	if (widget->graphicsview->rotation_angle == 90)
+	{
+		const QString old_top = top_string;
+		const QString old_left = left_string;
+		top_string = old_left;
+		left_string = GraphicsUtils::flip_label(old_top);
+	}
+	else if (widget->graphicsview->rotation_angle == 180)
+	{
+		top_string = GraphicsUtils::flip_label(top_string);
+		left_string = GraphicsUtils::flip_label(left_string);
+	}
+	else if (widget->graphicsview->rotation_angle == 270)
+	{
+		const QString old_top = top_string;
+		const QString old_left = left_string;
+		top_string = GraphicsUtils::flip_label(old_left);
+		left_string = old_top;
+	}
 	widget->set_top_label_text(top_string);
 	widget->set_left_label_text(left_string);
 	widget->graphicsview->setTransform(t);
@@ -1491,7 +1554,28 @@ template<typename T> void load_image(
 	else if (flip_x)      t = t.scale(-1.0,  1.0);
 	if (global_flip_x)    t = t.scale(-1.0,  1.0);
 	if (global_flip_y)    t = t.scale( 1.0, -1.0);
+	if (widget->graphicsview->rotation_angle != 0)
+		t.rotate(widget->graphicsview->rotation_angle);
 	//
+	if (widget->graphicsview->rotation_angle == 90)
+	{
+		const QString old_top = top_string;
+		const QString old_left = left_string;
+		top_string = old_left;
+		left_string = GraphicsUtils::flip_label(old_top);
+	}
+	else if (widget->graphicsview->rotation_angle == 180)
+	{
+		top_string = GraphicsUtils::flip_label(top_string);
+		left_string = GraphicsUtils::flip_label(left_string);
+	}
+	else if (widget->graphicsview->rotation_angle == 270)
+	{
+		const QString old_top = top_string;
+		const QString old_left = left_string;
+		top_string = GraphicsUtils::flip_label(old_left);
+		left_string = old_top;
+	}
 	widget->set_top_label_text(top_string);
 	widget->set_left_label_text(left_string);
 	//

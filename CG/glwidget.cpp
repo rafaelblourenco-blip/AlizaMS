@@ -321,12 +321,20 @@ void GLWidget::resizeGL(int width, int height)
 void GLWidget::mousePressEvent(QMouseEvent * e)
 {
 	e->accept();
+	const Qt::KeyboardModifiers mods = QApplication::keyboardModifiers();
 	if (e->buttons() & Qt::LeftButton)
 	{
-		lastPos = e->pos();
+		if (mods & Qt::ShiftModifier)
+		{
+			lastPanPos = e->pos();
+		}
+		else
+		{
+			lastPos = e->pos();
+		}
 		if (adjust) timer1.start();
 	}
-	else if (e->buttons() & Qt::MiddleButton)
+	else if ((e->buttons() & Qt::MiddleButton) || (e->buttons() & Qt::BackButton))
 	{
 		lastPanPos = e->pos();
 		if (adjust) timer1.start();
@@ -346,7 +354,7 @@ void GLWidget::mouseReleaseEvent(QMouseEvent * e)
 {
 	e->accept();
 	if (adjust &&
-		(e->button() == Qt::LeftButton || e->button() == Qt::MiddleButton || e->button() == Qt::RightButton))
+		(e->button() == Qt::LeftButton || e->button() == Qt::MiddleButton || e->button() == Qt::RightButton || e->button() == Qt::BackButton))
 	{
 		timer1.invalidate();
 	}
@@ -359,16 +367,30 @@ void GLWidget::mouseMoveEvent(QMouseEvent * e)
 	{
 		return;
 	}
+	const Qt::KeyboardModifiers mods = QApplication::keyboardModifiers();
 	if (e->buttons() & Qt::LeftButton)
 	{
-		const QPoint p = e->pos();
-		set_win_old_position(lastPos.x(), lastPos.y());
-		set_win_new_position(p.x(), p.y());
-		lastPos = p;
-		if (adjust) timer1.start();
-		updateGL();
+		if (mods & Qt::ShiftModifier)
+		{
+			const QPoint p = e->pos();
+			const int deltax = p.x() - lastPanPos.x();
+			const int deltay = p.y() - lastPanPos.y();
+			set_pan_delta(deltax, deltay);
+			lastPanPos = p;
+			if (adjust) timer1.start();
+			updateGL();
+		}
+		else
+		{
+			const QPoint p = e->pos();
+			set_win_old_position(lastPos.x(), lastPos.y());
+			set_win_new_position(p.x(), p.y());
+			lastPos = p;
+			if (adjust) timer1.start();
+			updateGL();
+		}
 	}
-	else if (e->buttons() & Qt::MiddleButton)
+	else if ((e->buttons() & Qt::MiddleButton) || (e->buttons() & Qt::BackButton))
 	{
 		const QPoint p = e->pos();
 		const int deltax = p.x() - lastPanPos.x();

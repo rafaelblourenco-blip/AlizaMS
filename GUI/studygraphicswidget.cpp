@@ -256,6 +256,8 @@ template<typename T> void load_rgb_image2(
 	else if (flip_x)      t = t.scale(-1.0,  1.0);
 	if (global_flip_x)    t = t.scale(-1.0,  1.0);
 	if (global_flip_y)    t = t.scale( 1.0, -1.0);
+	if (widget->graphicsview->rotation_angle != 0)
+		t.rotate(widget->graphicsview->rotation_angle);
 	//
 	const QRectF rectf(0, 0, size[0], size[1]);
 	widget->graphicsview->scene()->setSceneRect(rectf);
@@ -525,6 +527,8 @@ template<typename T> void load_rgba_image2(
 	else if (flip_x)      t = t.scale(-1.0,  1.0);
 	if (global_flip_x)    t = t.scale(-1.0,  1.0);
 	if (global_flip_y)    t = t.scale( 1.0, -1.0);
+	if (widget->graphicsview->rotation_angle != 0)
+		t.rotate(widget->graphicsview->rotation_angle);
 	//
 	const QRectF rectf(0, 0, size[0], size[1]);
 	widget->graphicsview->scene()->setSceneRect(rectf);
@@ -643,6 +647,8 @@ template<typename T> void load_rgb_char_image2(
 	else if (flip_x)      t = t.scale(-1.0,  1.0);
 	if (global_flip_x)    t = t.scale(-1.0,  1.0);
 	if (global_flip_y)    t = t.scale( 1.0, -1.0);
+	if (widget->graphicsview->rotation_angle != 0)
+		t.rotate(widget->graphicsview->rotation_angle);
 	//
 	const QRectF rectf(0, 0, size[0], size[1]);
 	widget->graphicsview->scene()->setSceneRect(rectf);
@@ -812,6 +818,8 @@ template<typename T> void load_rgba_char_image2(
 	else if (flip_x)      t = t.scale(-1.0,  1.0);
 	if (global_flip_x)    t = t.scale(-1.0,  1.0);
 	if (global_flip_y)    t = t.scale( 1.0, -1.0);
+	if (widget->graphicsview->rotation_angle != 0)
+		t.rotate(widget->graphicsview->rotation_angle);
 	//
 	const QRectF rectf(0, 0, size[0], size[1]);
 	widget->graphicsview->scene()->setSceneRect(rectf);
@@ -885,6 +893,7 @@ template<typename T> void load_image2(
 	num_threads = qMin(num_threads, static_cast<int>(size[1])); // don't create more threads than rows
 	const int tmp99 = size[1] % num_threads;
 	std::vector<QThread*> threadsLUT_;
+	const bool alt_mode = widget->get_alt_mode();
 	if (tmp99 == 0)
 	{
 		unsigned int j = 0;
@@ -901,7 +910,7 @@ template<typename T> void load_image2(
 						size_0, size_1,
 						index_0, index_1, j,
 						window_center, window_width,
-						lut, false, lut_function);
+						lut, alt_mode, lut_function);
 			j += 3 * size_0 * size_1;
 			threadsLUT_.push_back(static_cast<QThread*>(t__));
 			t__->start();
@@ -930,7 +939,7 @@ template<typename T> void load_image2(
 							size_0, block,
 							index_0, index_1, j,
 							window_center, window_width,
-							lut, false, lut_function);
+							lut, alt_mode, lut_function);
 				j += 3 * size_0 * block;
 				threadsLUT_.push_back(static_cast<QThread*>(t__));
 				t__->start();
@@ -941,7 +950,7 @@ template<typename T> void load_image2(
 						size[0], tmp100,
 						0, incr * block, j,
 						window_center, window_width,
-						lut, false, lut_function);
+						lut, alt_mode, lut_function);
 			threadsLUT_.push_back(static_cast<QThread*>(lt__));
 			lt__->start();
 		}
@@ -953,7 +962,7 @@ template<typename T> void load_image2(
 						size[0], size[1],
 						0, 0, 0,
 						window_center, window_width,
-						lut, false, lut_function);
+						lut, alt_mode, lut_function);
 			threadsLUT_.push_back(static_cast<QThread*>(lt__));
 			lt__->start();
 		}
@@ -1062,6 +1071,8 @@ template<typename T> void load_image2(
 	else if (flip_x)      t = t.scale(-1.0,  1.0);
 	if (global_flip_x)    t = t.scale(-1.0,  1.0);
 	if (global_flip_y)    t = t.scale( 1.0, -1.0);
+	if (widget->graphicsview->rotation_angle != 0)
+		t.rotate(widget->graphicsview->rotation_angle);
 	//
 	widget->graphicsview->draw_shutter(ivariant);
 	widget->graphicsview->draw_prgraphics(ivariant);
@@ -2641,3 +2652,10 @@ void StudyGraphicsWidget::update_measurement(
 		set_measure_text(tmp0);
 	}
 }
+
+void StudyGraphicsWidget::set_alt_mode(bool t)
+{
+	alt_mode = t;
+	update_image(0);
+}
+

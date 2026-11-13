@@ -146,6 +146,7 @@ ImagesBox::ImagesBox(float si)
 	listWidget->setMovement(QListView::Static);
 	listWidget->setFlow(QListView::TopToBottom);
 	listWidget->setDragDropMode(QAbstractItemView::DragOnly);
+	listWidget->installEventFilter(this);
 	//
 	width_doubleSpinBox = new QDoubleSpinBox();
 	//
@@ -874,4 +875,24 @@ void ImagesBox::update_background_color(bool b)
 		textBrowser->setStyleSheet("QTextEdit { background-color: rgb(210, 210, 210); }");
 	}
 }
+
+bool ImagesBox::eventFilter(QObject * watched, QEvent * event)
+{
+	if (watched == listWidget && event->type() == QEvent::MouseButtonPress)
+	{
+		QMouseEvent * me = static_cast<QMouseEvent*>(event);
+		if (me->button() == Qt::LeftButton && (me->modifiers() & Qt::ControlModifier))
+		{
+			QListWidgetItem * item = listWidget->itemAt(me->pos());
+			if (item)
+			{
+				ListWidgetItem2 * lwi = static_cast<ListWidgetItem2*>(item);
+				emit open_series_split(lwi->get_id());
+				return true;
+			}
+		}
+	}
+	return QWidget::eventFilter(watched, event);
+}
+
 

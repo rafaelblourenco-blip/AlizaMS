@@ -63,6 +63,13 @@ public:
 	double m_scale{1.0};
 	bool global_flip_x{};
 	bool global_flip_y{};
+	int rotation_angle{0};
+	static bool s_show_hud;
+	static bool s_anonymous_mode;
+	static void toggle_hud_display();
+	static void toggle_anonymous_display();
+	static bool is_hud_visible();
+	static bool is_anonymous_mode();
 	void emit_bb_update();
 	void update_background_color();
 	void draw_frames(short);
@@ -128,6 +135,9 @@ private:
 	void get_pixel_value2(double,double);
 	void flipX();
 	void flipY();
+	void rotate_cw();
+	void rotate_ccw();
+	void reset_transformations();
 };
 
 #endif

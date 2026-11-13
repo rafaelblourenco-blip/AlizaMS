@@ -1,5 +1,7 @@
 #include "studygraphicsview.h"
 #include "studygraphicswidget.h"
+#include "graphicsview.h"
+#include "radiantinputdispatcher.h"
 #include <QtGlobal>
 #include <QColor>
 #include <QRectF>
@@ -84,25 +86,95 @@ StudyGraphicsView::~StudyGraphicsView()
 
 void StudyGraphicsView::keyPressEvent(QKeyEvent * e)
 {
+	const bool ctrl = (e->modifiers() & Qt::ControlModifier);
+
+	if (ctrl)
+	{
+		switch (e->key())
+		{
+		case Qt::Key_0:
+			parent->update_image(1);
+			return;
+		case Qt::Key_1:
+			m_scale = 1.0;
+			setTransform(QTransform());
+			parent->update_image(0);
+			return;
+		case Qt::Key_2:
+			m_scale = 2.0;
+			setTransform(QTransform().scale(2.0, 2.0));
+			parent->update_image(0);
+			return;
+		case Qt::Key_3:
+			m_scale = 4.0;
+			setTransform(QTransform().scale(4.0, 4.0));
+			parent->update_image(0);
+			return;
+		case Qt::Key_4:
+			m_scale = 8.0;
+			setTransform(QTransform().scale(8.0, 8.0));
+			parent->update_image(0);
+			return;
+		case Qt::Key_F11:
+			if (parent && parent->get_aliza())
+			{
+				parent->get_aliza()->show_custom_wl_dialog(this);
+			}
+			return;
+		default:
+			break;
+		}
+	}
+	else
+	{
+		switch (e->key())
+		{
+		case Qt::Key_0:
+			if (parent && parent->get_aliza()) parent->get_aliza()->apply_wl_preset(0);
+			return;
+		case Qt::Key_1:
+			if (parent && parent->get_aliza()) parent->get_aliza()->apply_wl_preset(1);
+			return;
+		case Qt::Key_2:
+			if (parent && parent->get_aliza()) parent->get_aliza()->apply_wl_preset(2);
+			return;
+		case Qt::Key_3:
+			if (parent && parent->get_aliza()) parent->get_aliza()->apply_wl_preset(3);
+			return;
+		case Qt::Key_4:
+			if (parent && parent->get_aliza()) parent->get_aliza()->apply_wl_preset(4);
+			return;
+		case Qt::Key_5:
+			if (parent && parent->get_aliza()) parent->get_aliza()->apply_wl_preset(5);
+			return;
+		case Qt::Key_6:
+			if (parent && parent->get_aliza()) parent->get_aliza()->apply_wl_preset(6);
+			return;
+		case Qt::Key_7:
+			if (parent && parent->get_aliza()) parent->get_aliza()->apply_wl_preset(7);
+			return;
+		case Qt::Key_8:
+			if (parent && parent->get_aliza()) parent->get_aliza()->apply_wl_preset(8);
+			return;
+		case Qt::Key_9:
+			if (parent && parent->get_aliza()) parent->get_aliza()->apply_wl_preset(9);
+			return;
+		case Qt::Key_F11:
+			if (parent) parent->set_alt_mode(!parent->get_alt_mode());
+			return;
+		default:
+			break;
+		}
+	}
+
 	switch (e->key())
 	{
 	case Qt::Key_Plus:
-		zoom_in();
-		break;
 	case Qt::Key_Equal:
 		zoom_in();
 		break;
 	case Qt::Key_Minus:
 		zoom_out();
-		break;
-	case Qt::Key_0:
-		parent->update_image(1);
-		break;
-	case Qt::Key_1:
-		{
-			m_scale = 1.0;
-			parent->update_image(0);
-		}
 		break;
 	case Qt::Key_X:
 		flipX();
@@ -112,10 +184,6 @@ void StudyGraphicsView::keyPressEvent(QKeyEvent * e)
 		break;
 	case Qt::Key_F:
 		parent->update_image(1);
-		break;
-	case Qt::Key_C:
-		break;
-	case Qt::Key_P:
 		break;
 	case Qt::Key_S:
 		{
@@ -142,6 +210,10 @@ void StudyGraphicsView::keyReleaseEvent(QKeyEvent * e)
 
 void StudyGraphicsView::wheelEvent(QWheelEvent * e)
 {
+	if (RadiantInputDispatcher::instance()->handle_study_wheel(this, e, parent))
+	{
+		return;
+	}
 #if QT_VERSION >= QT_VERSION_CHECK(5,0,0)
 	scale_view(pow(2.0, -e->angleDelta().y() / 480.0));
 #else
@@ -157,7 +229,119 @@ void StudyGraphicsView::drawBackground(QPainter * painter, const QRectF & rect)
 void StudyGraphicsView::drawForeground(QPainter * painter, const QRectF & rect)
 {
 	Q_UNUSED(rect);
-	Q_UNUSED(painter);
+	if (!GraphicsView::is_hud_visible()) return;
+	if (!parent || !parent->image_container.image3D) return;
+
+	const ImageVariant * iv = parent->image_container.image3D;
+	if (!iv || !iv->di) return;
+
+	painter->save();
+	painter->resetTransform();
+
+	const QRect vr = viewport()->rect();
+	const int margin = 12;
+	const int lineHeight = 16;
+	QFont font = painter->font();
+	font.setFamily("Segoe UI");
+	font.setPointSize(9);
+	font.setBold(true);
+	painter->setFont(font);
+
+	auto drawShadow = [&](int x, int y, const QString & text) {
+		if (text.isEmpty()) return;
+		painter->setPen(QColor(0, 0, 0, 240));
+		painter->drawText(x + 1, y + 1, text);
+		painter->drawText(x - 1, y + 1, text);
+		painter->drawText(x + 1, y - 1, text);
+		painter->drawText(x - 1, y - 1, text);
+		painter->setPen(QColor(230, 230, 230));
+		painter->drawText(x, y, text);
+	};
+
+	auto drawShadowRight = [&](int y, const QString & text) {
+		if (text.isEmpty()) return;
+#if QT_VERSION >= QT_VERSION_CHECK(5, 11, 0)
+		const int textWidth = painter->fontMetrics().horizontalAdvance(text);
+#else
+		const int textWidth = painter->fontMetrics().width(text);
+#endif
+		drawShadow(vr.right() - margin - textWidth, y, text);
+	};
+
+	// 1. TOP-LEFT: Patient Name / ID, Data, Série
+	int tl_y = vr.top() + margin + lineHeight;
+	QString patText = GraphicsView::is_anonymous_mode() ? QString("[ANÔNIMO]") : (iv->pat_name.isEmpty() ? iv->pat_id : iv->pat_name);
+	if (!patText.isEmpty())
+	{
+		drawShadow(vr.left() + margin, tl_y, patText);
+		tl_y += lineHeight;
+	}
+
+	if (!GraphicsView::is_anonymous_mode() && !iv->pat_id.isEmpty())
+	{
+		drawShadow(vr.left() + margin, tl_y, QString("ID: ") + iv->pat_id);
+		tl_y += lineHeight;
+	}
+
+	if (!iv->study_date.isEmpty())
+	{
+		drawShadow(vr.left() + margin, tl_y, iv->study_date);
+		tl_y += lineHeight;
+	}
+
+	if (!iv->series_description.isEmpty())
+	{
+		drawShadow(vr.left() + margin, tl_y, iv->series_description);
+		tl_y += lineHeight;
+	}
+
+	// 2. TOP-RIGHT: Instituição, Modalidade
+	int tr_y = vr.top() + margin + lineHeight;
+	if (!iv->institution.isEmpty())
+	{
+		drawShadowRight(tr_y, iv->institution);
+		tr_y += lineHeight;
+	}
+
+	if (!iv->modality.isEmpty())
+	{
+		drawShadowRight(tr_y, iv->modality);
+		tr_y += lineHeight;
+	}
+
+	// 3. BOTTOM-LEFT: Im: X/Y, Loc: Z mm, Thk: X mm, Zoom
+	int bl_y = vr.bottom() - margin;
+	const int zoomPercent = static_cast<int>(std::round(transform().m11() * 100.0));
+	drawShadow(vr.left() + margin, bl_y, QString("Zoom: %1%").arg(zoomPercent));
+	bl_y -= lineHeight;
+
+	if (iv->di->iz_spacing > 0.0)
+	{
+		drawShadow(vr.left() + margin, bl_y, QString::asprintf("Thk: %.1f mm", iv->di->iz_spacing));
+		bl_y -= lineHeight;
+	}
+
+	const double sliceLoc = iv->di->iz_origin + (iv->di->selected_z_slice * iv->di->iz_spacing);
+	drawShadow(vr.left() + margin, bl_y, QString::asprintf("Loc: %.1f mm", sliceLoc));
+	bl_y -= lineHeight;
+
+	const int curSlice = iv->di->selected_z_slice + 1;
+	const int totalSlices = std::max(1, iv->di->idimz);
+	drawShadow(vr.left() + margin, bl_y, QString("Im: %1/%2").arg(curSlice).arg(totalSlices));
+
+	// 4. BOTTOM-RIGHT: WL: X WW: Y
+	int br_y = vr.bottom() - margin;
+	if (parent->measure_label && !parent->measure_label->text().isEmpty())
+	{
+		drawShadowRight(br_y, parent->measure_label->text());
+		br_y -= lineHeight;
+	}
+
+	const int curWL = static_cast<int>(std::round(iv->di->us_window_center));
+	const int curWW = static_cast<int>(std::round(iv->di->us_window_width));
+	drawShadowRight(br_y, QString("WL: %1  WW: %2").arg(curWL).arg(curWW));
+
+	painter->restore();
 }
 
 void StudyGraphicsView::scale_view(double scale_factor)
@@ -322,34 +506,28 @@ void StudyGraphicsView::clear_shutters()
 
 void StudyGraphicsView::mousePressEvent(QMouseEvent * e)
 {
-	if (e->button() == Qt::LeftButton)
+	parent->set_active();
+
+	if (RadiantInputDispatcher::instance()->handle_study_mouse_press(this, e, parent))
 	{
-		parent->set_active();
-		switch (parent->get_mouse_modus())
-		{
-		case 2:
-			{
-				m0_set = true;
-				m1_set = false;
-				const QPoint p0 = e->pos();
-				const QPointF p1 = mapToScene(p0);
-				m0_win_pos_x = p1.x();
-				m0_win_pos_y = p1.y();
-				measure();
-			}
-			break;
-		default:
-			QGraphicsView::mousePressEvent(e);
-			break;
-		}
+		return;
 	}
-	else if (e->button() == Qt::RightButton)
+
+	if (e->button() == Qt::ForwardButton ||
+	    (RadiantInputDispatcher::instance()->get_tool() == RadiantTool::Length && e->button() == Qt::LeftButton) ||
+	    parent->get_mouse_modus() == 2)
 	{
+		m0_set = true;
+		m1_set = false;
+		const QPoint p0 = e->pos();
+		const QPointF p1 = mapToScene(p0);
+		m0_win_pos_x = p1.x();
+		m0_win_pos_y = p1.y();
+		measure();
+		return;
 	}
-	else
-	{
-		QGraphicsView::mousePressEvent(e);
-	}
+
+	QGraphicsView::mousePressEvent(e);
 }
 
 void StudyGraphicsView::mouseDoubleClickEvent(QMouseEvent * e)
@@ -359,69 +537,80 @@ void StudyGraphicsView::mouseDoubleClickEvent(QMouseEvent * e)
 
 void StudyGraphicsView::mouseReleaseEvent(QMouseEvent * e)
 {
-	if (e->button() == Qt::LeftButton)
+	if (RadiantInputDispatcher::instance()->handle_study_mouse_release(this, e, parent))
 	{
-		switch (parent->get_mouse_modus())
+		return;
+	}
+
+	if (m0_set && (e->button() == Qt::LeftButton || e->button() == Qt::ForwardButton))
+	{
+		m1_set = true;
+		const QPoint p0 = e->pos();
+		const QPointF p1 = mapToScene(p0);
+		m1_win_pos_x = p1.x();
+		m1_win_pos_y = p1.y();
+		if (QApplication::keyboardModifiers() & Qt::ShiftModifier)
 		{
-		case 2:
+			const double dx = m1_win_pos_x - m0_win_pos_x;
+			const double dy = m1_win_pos_y - m0_win_pos_y;
+			const double adx = std::abs(dx);
+			const double ady = std::abs(dy);
+			if (adx > 2.0 * ady)
+				m1_win_pos_y = m0_win_pos_y;
+			else if (ady > 2.0 * adx)
+				m1_win_pos_x = m0_win_pos_x;
+			else
 			{
-				m0_set = true;
-				m1_set = true;
-				const QPoint p0 = e->pos();
-				const QPointF p1 = mapToScene(p0);
-				m1_win_pos_x = p1.x();
-				m1_win_pos_y = p1.y();
-				measure();
-				m0_set = false;
-				m1_set = false;
+				const double dist = std::max(adx, ady);
+				m1_win_pos_x = m0_win_pos_x + ((dx >= 0) ? dist : -dist);
+				m1_win_pos_y = m0_win_pos_y + ((dy >= 0) ? dist : -dist);
 			}
-			break;
-		default:
-			QGraphicsView::mouseReleaseEvent(e);
-			break;
 		}
+		measure();
+		m0_set = false;
+		m1_set = false;
+		return;
 	}
-	else
-	{
-		QGraphicsView::mouseReleaseEvent(e);
-	}
+
+	QGraphicsView::mouseReleaseEvent(e);
 }
 
 void StudyGraphicsView::mouseMoveEvent(QMouseEvent * e)
 {
-	const short mm = parent->get_mouse_modus();
-	if (e->buttons() & Qt::LeftButton)
+	if (RadiantInputDispatcher::instance()->handle_study_mouse_move(this, e, parent))
 	{
-		switch (mm)
-		{
-		case 2:
-			{
-				if (m0_set)
-				{
-					m1_set = true;
-					const QPoint p0 = e->pos();
-					const QPointF p1 = mapToScene(p0);
-					m1_win_pos_x = p1.x();
-					m1_win_pos_y = p1.y();
-					measure();
-				}
-			}
-			break;
-		default:
-			QGraphicsView::mouseMoveEvent(e);
-			break;
-		}
+		return;
 	}
-	else if (e->buttons() & Qt::RightButton)
+
+	if (m0_set && (e->buttons() & (Qt::LeftButton | Qt::ForwardButton)))
 	{
+		m1_set = true;
 		const QPoint p0 = e->pos();
-		set_win_old_position(new_win_pos_x, new_win_pos_y);
-		set_win_new_position(p0.x(), p0.y());
+		const QPointF p1 = mapToScene(p0);
+		m1_win_pos_x = p1.x();
+		m1_win_pos_y = p1.y();
+		if (QApplication::keyboardModifiers() & Qt::ShiftModifier)
+		{
+			const double dx = m1_win_pos_x - m0_win_pos_x;
+			const double dy = m1_win_pos_y - m0_win_pos_y;
+			const double adx = std::abs(dx);
+			const double ady = std::abs(dy);
+			if (adx > 2.0 * ady)
+				m1_win_pos_y = m0_win_pos_y;
+			else if (ady > 2.0 * adx)
+				m1_win_pos_x = m0_win_pos_x;
+			else
+			{
+				const double dist = std::max(adx, ady);
+				m1_win_pos_x = m0_win_pos_x + ((dx >= 0) ? dist : -dist);
+				m1_win_pos_y = m0_win_pos_y + ((dy >= 0) ? dist : -dist);
+			}
+		}
+		measure();
+		return;
 	}
-	else
-	{
-		QGraphicsView::mouseMoveEvent(e);
-	}
+
+	QGraphicsView::mouseMoveEvent(e);
 }
 
 void StudyGraphicsView::set_win_old_position(int x, int y)
@@ -557,6 +746,30 @@ void StudyGraphicsView::flipY()
 {
 	global_flip_y = !global_flip_y;
 	parent->update_image(0);
+}
+
+void StudyGraphicsView::rotate_cw()
+{
+	rotation_angle = (rotation_angle + 90) % 360;
+	if (parent)
+		parent->update_image(0);
+}
+
+void StudyGraphicsView::rotate_ccw()
+{
+	rotation_angle = (rotation_angle + 270) % 360;
+	if (parent)
+		parent->update_image(0);
+}
+
+void StudyGraphicsView::reset_transformations()
+{
+	rotation_angle = 0;
+	global_flip_x = false;
+	global_flip_y = false;
+	setTransform(QTransform());
+	if (parent)
+		parent->update_image(0);
 }
 
 void StudyGraphicsView::draw_prtexts(const ImageVariant * ivariant)

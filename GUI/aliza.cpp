@@ -2,6 +2,11 @@
 //#define ALIZA_PERF_COLLISION
 
 #include "aliza.h"
+#include <QDialog>
+#include <QFormLayout>
+#include <QDoubleSpinBox>
+#include <QDialogButtonBox>
+#include <QSignalBlocker>
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QProcess>
@@ -3662,6 +3667,58 @@ void Aliza::flipY()
 		graphicswidget_m->update_image(0, false);
 }
 
+void Aliza::rotate_cw()
+{
+	if (graphicswidget_m && graphicswidget_m->graphicsview)
+		graphicswidget_m->graphicsview->rotate_cw();
+	if (multiview)
+	{
+		if (graphicswidget_y && graphicswidget_y->graphicsview)
+			graphicswidget_y->graphicsview->rotate_cw();
+		if (graphicswidget_x && graphicswidget_x->graphicsview)
+			graphicswidget_x->graphicsview->rotate_cw();
+	}
+}
+
+void Aliza::rotate_ccw()
+{
+	if (graphicswidget_m && graphicswidget_m->graphicsview)
+		graphicswidget_m->graphicsview->rotate_ccw();
+	if (multiview)
+	{
+		if (graphicswidget_y && graphicswidget_y->graphicsview)
+			graphicswidget_y->graphicsview->rotate_ccw();
+		if (graphicswidget_x && graphicswidget_x->graphicsview)
+			graphicswidget_x->graphicsview->rotate_ccw();
+	}
+}
+
+void Aliza::reset_geometric_transformations()
+{
+	if (graphicswidget_m && graphicswidget_m->graphicsview)
+		graphicswidget_m->graphicsview->reset_transformations();
+	if (multiview)
+	{
+		if (graphicswidget_y && graphicswidget_y->graphicsview)
+			graphicswidget_y->graphicsview->reset_transformations();
+		if (graphicswidget_x && graphicswidget_x->graphicsview)
+			graphicswidget_x->graphicsview->reset_transformations();
+	}
+}
+
+void Aliza::toggle_hud_visibility()
+{
+	if (graphicswidget_m)
+	{
+		if (graphicswidget_m->top_label)
+			graphicswidget_m->top_label->setVisible(!graphicswidget_m->top_label->isVisible());
+		if (graphicswidget_m->left_label)
+			graphicswidget_m->left_label->setVisible(!graphicswidget_m->left_label->isVisible());
+		if (graphicswidget_m->measure_label)
+			graphicswidget_m->measure_label->setVisible(!graphicswidget_m->measure_label->isVisible());
+	}
+}
+
 void Aliza::toggle_maxwindow(bool i)
 {
 	if (lock0) return;
@@ -5151,4 +5208,207 @@ void Aliza::exit_null()
 {
 	exit(0);
 }
+
+void Aliza::apply_wl_preset(int preset)
+{
+	ImageVariant * v = get_selected_image();
+	if (!v || !v->di) return;
+	double target_center = v->di->us_window_center;
+	double target_width  = v->di->us_window_width;
+	switch (preset)
+	{
+	case 0: // DICOM Default
+		target_center = v->di->default_us_window_center;
+		target_width  = v->di->default_us_window_width;
+		break;
+	case 1: // Full dynamic
+		target_width  = ((v->di->rmax - v->di->rmin) > 0.0) ? (v->di->rmax - v->di->rmin) : 1.0;
+		target_center = (v->di->rmax + v->di->rmin) * 0.5;
+		break;
+	case 2: // Abdome TC
+		target_center = 60.0;
+		target_width  = 400.0;
+		break;
+	case 3: // Angio TC
+		target_center = 300.0;
+		target_width  = 600.0;
+		break;
+	case 4: // Osso TC
+		target_center = 300.0;
+		target_width  = 1500.0;
+		break;
+	case 5: // Crânio/Encéfalo TC
+		target_center = 40.0;
+		target_width  = 80.0;
+		break;
+	case 6: // Tórax/Mediastino TC
+		target_center = 40.0;
+		target_width  = 400.0;
+		break;
+	case 7: // Pulmão TC
+		target_center = -400.0;
+		target_width  = 1500.0;
+		break;
+	case 8: // Custom 1 (Coluna TC)
+		target_center = 250.0;
+		target_width  = 2000.0;
+		break;
+	case 9: // Custom 2 (Partes Moles)
+		target_center = 50.0;
+		target_width  = 350.0;
+		break;
+	default:
+		return;
+	}
+	set_us_center(v, target_center);
+	set_us_width(v, target_width);
+	if (v->group_id >= 0)
+	{
+		update_group_center(v);
+		update_group_width(v);
+	}
+	if (toolbox2D)
+	{
+		const QSignalBlocker b1(toolbox2D->center_doubleSpinBox);
+		const QSignalBlocker b2(toolbox2D->width_doubleSpinBox);
+		const QSignalBlocker b3(toolbox2D->center_horizontalSlider);
+		const QSignalBlocker b4(toolbox2D->width_horizontalSlider);
+		toolbox2D->set_center(target_center);
+		toolbox2D->set_width(target_width);
+		toolbox2D->center_horizontalSlider->setValue(static_cast<int>(target_center));
+		toolbox2D->width_horizontalSlider->setValue(static_cast<int>(target_width));
+	}
+	if (check_3d() && check_3d_visible()) glwidget->updateGL();
+	if (check_2d_visible())
+	{
+		if (!graphicswidget_m->run__)
+			graphicswidget_m->update_image(0, false);
+		if (multiview)
+		{
+			graphicswidget_y->update_image(0, false);
+			graphicswidget_x->update_image(0, false);
+		}
+	}
+	if (histogram_mode && histogramview) histogramview->update_window(v);
+}
+
+void Aliza::adjust_wl_delta(double delta_center, double delta_width)
+{
+	ImageVariant * v = get_selected_image();
+	if (!v || !v->di) return;
+	double new_center = v->di->us_window_center + delta_center;
+	double new_width  = v->di->us_window_width + delta_width;
+	if (new_width < 1.0) new_width = 1.0;
+	set_us_center(v, new_center);
+	set_us_width(v, new_width);
+	if (v->group_id >= 0)
+	{
+		update_group_center(v);
+		update_group_width(v);
+	}
+	if (toolbox2D)
+	{
+		const QSignalBlocker b1(toolbox2D->center_doubleSpinBox);
+		const QSignalBlocker b2(toolbox2D->width_doubleSpinBox);
+		const QSignalBlocker b3(toolbox2D->center_horizontalSlider);
+		const QSignalBlocker b4(toolbox2D->width_horizontalSlider);
+		toolbox2D->set_center(new_center);
+		toolbox2D->set_width(new_width);
+		toolbox2D->center_horizontalSlider->setValue(static_cast<int>(new_center));
+		toolbox2D->width_horizontalSlider->setValue(static_cast<int>(new_width));
+	}
+	if (check_3d() && check_3d_visible()) glwidget->updateGL();
+	if (check_2d_visible())
+	{
+		if (!graphicswidget_m->run__)
+			graphicswidget_m->update_image(0, false);
+		if (multiview)
+		{
+			graphicswidget_y->update_image(0, false);
+			graphicswidget_x->update_image(0, false);
+		}
+	}
+}
+
+void Aliza::toggle_invert_lut()
+{
+	if (!graphicswidget_m) return;
+	const bool next = !graphicswidget_m->get_alt_mode();
+	graphicswidget_m->set_alt_mode(next);
+	if (multiview)
+	{
+		graphicswidget_y->set_alt_mode(next);
+		graphicswidget_x->set_alt_mode(next);
+	}
+}
+
+void Aliza::show_custom_wl_dialog(QWidget * parent_widget)
+{
+	ImageVariant * v = get_selected_image();
+	if (!v || !v->di) return;
+
+	QDialog dlg(parent_widget);
+	dlg.setWindowTitle(QString("Ajuste Manual de Janela (WL/WW)"));
+	dlg.setModal(true);
+	dlg.resize(320, 140);
+
+	QVBoxLayout * layout = new QVBoxLayout(&dlg);
+	QFormLayout * form = new QFormLayout();
+
+	QDoubleSpinBox * wl_spin = new QDoubleSpinBox(&dlg);
+	wl_spin->setRange(-10000.0, 10000.0);
+	wl_spin->setDecimals(1);
+	wl_spin->setValue(v->di->us_window_center);
+
+	QDoubleSpinBox * ww_spin = new QDoubleSpinBox(&dlg);
+	ww_spin->setRange(1.0, 20000.0);
+	ww_spin->setDecimals(1);
+	ww_spin->setValue(v->di->us_window_width);
+
+	form->addRow(QString("Window Level (WL - Centro):"), wl_spin);
+	form->addRow(QString("Window Width (WW - Largura):"), ww_spin);
+	layout->addLayout(form);
+
+	QDialogButtonBox * buttons = new QDialogButtonBox(
+		QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+	layout->addWidget(buttons);
+
+	QObject::connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+	QObject::connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+	if (dlg.exec() == QDialog::Accepted)
+	{
+		set_us_center(v, wl_spin->value());
+		set_us_width(v, ww_spin->value());
+		if (v->group_id >= 0)
+		{
+			update_group_center(v);
+			update_group_width(v);
+		}
+		if (toolbox2D)
+		{
+			const QSignalBlocker b1(toolbox2D->center_doubleSpinBox);
+			const QSignalBlocker b2(toolbox2D->width_doubleSpinBox);
+			const QSignalBlocker b3(toolbox2D->center_horizontalSlider);
+			const QSignalBlocker b4(toolbox2D->width_horizontalSlider);
+			toolbox2D->set_center(wl_spin->value());
+			toolbox2D->set_width(ww_spin->value());
+			toolbox2D->center_horizontalSlider->setValue(static_cast<int>(wl_spin->value()));
+			toolbox2D->width_horizontalSlider->setValue(static_cast<int>(ww_spin->value()));
+		}
+		if (check_3d() && check_3d_visible()) glwidget->updateGL();
+		if (check_2d_visible())
+		{
+			if (!graphicswidget_m->run__)
+				graphicswidget_m->update_image(0, false);
+			if (multiview)
+			{
+				graphicswidget_y->update_image(0, false);
+				graphicswidget_x->update_image(0, false);
+			}
+		}
+		if (histogram_mode && histogramview) histogramview->update_window(v);
+	}
+}
+
 

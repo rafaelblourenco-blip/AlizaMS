@@ -16,6 +16,7 @@
 #include <QDateTime>
 #include "commonutils.h"
 #include "infodialog.h"
+#include "radiantshortcutsmanager.h"
 
 namespace
 {
@@ -74,9 +75,7 @@ MainWindow::MainWindow(
 	dockWidget1->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
 	dockWidget1->setFloating(false);
 	dockWidget1->setFeatures(QDockWidget::DockWidgetMovable);
-	addDockWidget(
-		(dock_area == 2) ? Qt::RightDockWidgetArea : Qt::LeftDockWidgetArea,
-		dockWidget1);
+	addDockWidget(Qt::LeftDockWidgetArea, dockWidget1);
 	imagesbox_frame1 = new QFrame(this);
 	imagesbox_frame1->setFrameShape(QFrame::NoFrame);
 	imagesbox_frame1->setFrameShadow(QFrame::Plain);
@@ -427,6 +426,10 @@ MainWindow::MainWindow(
 	histogram_frame2_layout->setContentsMargins(0, 0, 0, 0);
 	aliza->set_histogramview(histogramview);
 	//
+	radiant_shortcuts_mgr = new RadiantShortcutsManager(this, this);
+	radiant_shortcuts_mgr->initialize_shortcuts();
+	radiant_shortcuts_mgr->create_radiant_toolbar();
+	//
 	first_image_loaded = false;
 	connect(aliza, SIGNAL(report_load_to_mainwin()), this, SLOT(set_ui()));
 	//
@@ -536,6 +539,7 @@ MainWindow::MainWindow(
 	connect(imagesbox->actionStudy,         SIGNAL(triggered()),         this,    SLOT(trigger_studyview()));
 	connect(imagesbox->actionStudyChecked,  SIGNAL(triggered()),         this,    SLOT(trigger_studyview_checked()));
 	connect(imagesbox->actionStudyEmpty,    SIGNAL(triggered()),         this,    SLOT(trigger_studyview_empty()));
+	connect(imagesbox,                      SIGNAL(open_series_split(int)), this, SLOT(trigger_studyview()));
 	connect(set_default_settings,           SIGNAL(triggered()),         this,    SLOT(trigger_default_settings()));
 #if QT_VERSION >= QT_VERSION_CHECK(5,14,0)
 	connect(settingswidget->styleComboBox,  SIGNAL(currentTextChanged(const QString&)),this, SLOT(set_style(const QString&)));
@@ -640,7 +644,16 @@ void MainWindow::open_args(const QStringList & l)
 		else if (fi.isDir())
 		{
 			browser2->open_dicom_dir2(fi.absoluteFilePath());
-			tabWidget->setCurrentIndex(t);
+			if (browser2->tableWidget->rowCount() > 0)
+			{
+				browser2->tableWidget->selectRow(0);
+				load_dicom_series2();
+				tabWidget->setCurrentIndex(0);
+			}
+			else
+			{
+				tabWidget->setCurrentIndex(t);
+			}
 		}
 		else if (fi.isFile())
 		{
@@ -1728,10 +1741,11 @@ void MainWindow::set_ui()
 	if (!first_image_loaded)
 	{
 		show2DAct->setEnabled(true);
-		toolbar2D_frame->show();
-		level_frame->show();
+		toolbar2D_frame->hide();
+		level_frame->hide();
+		zrange_frame->hide();
+		dockWidget1->show();
 		imagesbox_frame1->show();
-		zrange_frame->show();
 		slider_frame->show();
 		view2d_frame->show();
 		info_line->show();

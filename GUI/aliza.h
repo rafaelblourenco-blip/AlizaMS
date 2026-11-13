@@ -100,6 +100,10 @@ public:
 		QAction*);
 	void set_anim3Dwidget(AnimWidget*);
 	void set_anim2Dwidget(AnimWidget*);
+	void apply_wl_preset(int preset);
+	void adjust_wl_delta(double delta_center, double delta_width);
+	void toggle_invert_lut();
+	void show_custom_wl_dialog(QWidget * parent_widget = nullptr);
 	void connect_slots();
 	void set_axis_2D(int, bool /*rectangle selection mode*/);
 	void set_histogram();
@@ -125,6 +129,10 @@ public:
 	void center_from_histogram(double);
 	void flipX();
 	void flipY();
+	void rotate_cw();
+	void rotate_ccw();
+	void reset_geometric_transformations();
+	void toggle_hud_visibility();
 	void reset_3d();
 	void set_uniq_string(const QString &);
 	void toggle_collisions(bool);

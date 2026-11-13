@@ -478,44 +478,41 @@ int main(int argc, char * argv[])
 			}
 		}
 		//
-		if (!saved_style.isEmpty())
 		{
-			if (saved_style == QString("Dark Fusion"))
-			{
-				QColor bg(0x53, 0x59, 0x60);
-				QColor tt(0x30, 0x39, 0x47);
-				QPalette p;
-				p.setColor(QPalette::Window,          bg);
-				p.setColor(QPalette::WindowText,      Qt::white);
-				p.setColor(QPalette::Text,            Qt::white);
-				p.setColor(QPalette::Disabled,        QPalette::WindowText, Qt::gray);
-				p.setColor(QPalette::Disabled,        QPalette::Text,       Qt::gray);
-				p.setColor(QPalette::Base,            bg);
-				p.setColor(QPalette::AlternateBase,   bg);
-				p.setColor(QPalette::ToolTipBase,     tt);
-				p.setColor(QPalette::ToolTipText,     Qt::white);
-				p.setColor(QPalette::Button,          bg);
-				p.setColor(QPalette::ButtonText,      Qt::white);
-				p.setColor(QPalette::BrightText,      Qt::white);
-				p.setColor(QPalette::Link,            Qt::darkBlue);
-				p.setColor(QPalette::Highlight,       Qt::lightGray);
-				p.setColor(QPalette::HighlightedText, Qt::black);
+			QColor bg(0x12, 0x12, 0x12);
+			QColor tt(0x22, 0x22, 0x22);
+			QPalette p;
+			p.setColor(QPalette::Window,          bg);
+			p.setColor(QPalette::WindowText,      QColor(0xE0, 0xE0, 0xE0));
+			p.setColor(QPalette::Text,            QColor(0xE0, 0xE0, 0xE0));
+			p.setColor(QPalette::Disabled,        QPalette::WindowText, QColor(0x60, 0x60, 0x60));
+			p.setColor(QPalette::Disabled,        QPalette::Text,       QColor(0x60, 0x60, 0x60));
+			p.setColor(QPalette::Base,            QColor(0x18, 0x18, 0x18));
+			p.setColor(QPalette::AlternateBase,   QColor(0x1E, 0x1E, 0x1E));
+			p.setColor(QPalette::ToolTipBase,     tt);
+			p.setColor(QPalette::ToolTipText,     Qt::white);
+			p.setColor(QPalette::Button,          QColor(0x1E, 0x1E, 0x1E));
+			p.setColor(QPalette::ButtonText,      QColor(0xE0, 0xE0, 0xE0));
+			p.setColor(QPalette::BrightText,      Qt::white);
+			p.setColor(QPalette::Link,            QColor(0x00, 0x7A, 0xCC));
+			p.setColor(QPalette::Highlight,       QColor(0x00, 0x7A, 0xCC));
+			p.setColor(QPalette::HighlightedText, Qt::white);
 #if QT_VERSION >= QT_VERSION_CHECK(5,0,0)
-				app.setStyle(QString("Fusion"));
+			app.setStyle(QString("Fusion"));
 #else
-				app.setStyle(QString("Plastique"));
+			app.setStyle(QString("Plastique"));
 #endif
-				app.setPalette(p);
-			}
-			else
+			app.setPalette(p);
+
+			QFile qssFile(":/GUI/dark_radiant.qss");
+			if (!qssFile.exists())
 			{
-				app.setStyle(saved_style);
-				if (!(
-					saved_style.toUpper() == QString("WINDOWSVISTA") ||
-					saved_style.toUpper() == QString("MACOS")))
-				{
-					app.setPalette(app.style()->standardPalette());
-				}
+				qssFile.setFileName("GUI/dark_radiant.qss");
+			}
+			if (qssFile.open(QFile::ReadOnly))
+			{
+				app.setStyleSheet(QString::fromUtf8(qssFile.readAll()));
+				qssFile.close();
 			}
 		}
 	}

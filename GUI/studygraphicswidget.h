@@ -29,6 +29,10 @@ class StudyGraphicsWidget : public QWidget
 {
 
 Q_OBJECT
+	friend class Aliza;
+	friend class StudyGraphicsView;
+	friend class RadiantInputDispatcher;
+	friend class RadiantShortcutsManager;
 
 public:
 	StudyGraphicsWidget();

@@ -10,7 +10,6 @@
 #include "imagesbox.h"
 #include "sliderwidget.h"
 #include "animwidget.h"
-#include "glwidget.h"
 
 #include <QScrollBar>
 #include <QApplication>

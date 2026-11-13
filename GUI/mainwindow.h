@@ -70,6 +70,7 @@ public:
 	QAction * gloptionsAct;
 	QAction * animAct2d;
 	QAction * animAct3d;
+	RadiantShortcutsManager * get_radiant_shortcuts_manager() const { return radiant_shortcuts_mgr; }
 
 protected:
 	void closeEvent(QCloseEvent*) override;
@@ -138,7 +139,6 @@ private slots:
 	void trigger_studyview_checked();
 	void trigger_studyview_empty();
 	void trigger_default_settings();
-	RadiantShortcutsManager * get_radiant_shortcuts_manager() const { return radiant_shortcuts_mgr; }
 
 signals:
 	void quit_app();

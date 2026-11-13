@@ -51,6 +51,9 @@ public:
 	bool global_flip_x{};
 	bool global_flip_y{};
 	int rotation_angle{0};
+	void rotate_cw();
+	void rotate_ccw();
+	void reset_transformations();
 	void update_background_color();
 	void draw_frames(short);
 	void draw_us_regions();
@@ -96,9 +99,6 @@ private:
 	void measure();
 	void flipX();
 	void flipY();
-	void rotate_cw();
-	void rotate_ccw();
-	void reset_transformations();
 };
 
 #endif

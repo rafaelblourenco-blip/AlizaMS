@@ -64,6 +64,9 @@ public:
 	bool global_flip_x{};
 	bool global_flip_y{};
 	int rotation_angle{0};
+	void rotate_cw();
+	void rotate_ccw();
+	void reset_transformations();
 	static bool s_show_hud;
 	static bool s_anonymous_mode;
 	static void toggle_hud_display();
@@ -135,9 +138,6 @@ private:
 	void get_pixel_value2(double,double);
 	void flipX();
 	void flipY();
-	void rotate_cw();
-	void rotate_ccw();
-	void reset_transformations();
 };
 
 #endif

@@ -1,6 +1,7 @@
 #include "studygraphicsview.h"
 #include "studygraphicswidget.h"
 #include "graphicsview.h"
+#include "aliza.h"
 #include "radiantinputdispatcher.h"
 #include <QtGlobal>
 #include <QColor>

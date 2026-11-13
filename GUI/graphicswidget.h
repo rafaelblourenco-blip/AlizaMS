@@ -26,6 +26,10 @@ class Aliza;
 class GraphicsWidget : public QWidget
 {
 Q_OBJECT
+	friend class Aliza;
+	friend class GraphicsView;
+	friend class RadiantInputDispatcher;
+	friend class RadiantShortcutsManager;
 public:
 	GraphicsWidget(
 		short      /*axis*/,

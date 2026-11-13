@@ -1,4 +1,5 @@
 #include "imagesbox.h"
+#include <QMouseEvent>
 #include <QVariant>
 #include <QPixmap>
 #include <QBrush>

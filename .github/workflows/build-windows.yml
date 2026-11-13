@@ -15,14 +15,12 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Install Qt
-      uses: jurplel/install-qt-action@v3
+    - name: Install Qt 5.15.2
+      uses: jurplel/install-qt-action@v4
       with:
         version: '5.15.2'
-        host: 'windows'
-        target: 'desktop'
         arch: 'win64_msvc2019_64'
-        modules: 'qtimageformats qtsvg'
+        cache: true
 
     - name: Setup MSVC environment
       uses: ilammy/msvc-dev-cmd@v1
@@ -31,60 +29,61 @@ jobs:
 
     - name: Cache ITK
       id: cache-itk
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: ${{ runner.workspace }}/itk-install
-        key: ${{ runner.os }}-itk-5.3.0-modular-msvc2022
+        key: ${{ runner.os }}-itk-5.3.0-modular-msvc2022-v1
 
-    - name: Build ITK (if not cached)
+    - name: Build Modular ITK (if not cached)
       if: steps.cache-itk.outputs.cache-hit != 'true'
-      shell: bash
+      shell: pwsh
       run: |
-        mkdir -p ${{ runner.workspace }}/itk-build
-        cd ${{ runner.workspace }}
+        $ws = "${{ runner.workspace }}".Replace('\', '/')
+        New-Item -ItemType Directory -Path "$ws/itk-build" -Force | Out-Null
+        Set-Location "$ws"
         git clone --depth 1 --branch v5.3.0 https://github.com/InsightSoftwareConsortium/ITK.git itk-src
-        cd itk-build
-        cmake -G "Visual Studio 17 2022" -A x64 \
-          -DCMAKE_BUILD_TYPE=Release \
-          -DBUILD_EXAMPLES=OFF \
-          -DBUILD_TESTING=OFF \
-          -DITK_BUILD_DEFAULT_MODULES=OFF \
-          -DModule_ITKCommon=ON \
-          -DModule_ITKImageFilterBase=ON \
-          -DModule_ITKImageFunction=ON \
-          -DModule_ITKImageGrid=ON \
-          -DModule_ITKImageIntensity=ON \
-          -DModule_ITKSpatialObjects=ON \
-          -DModule_ITKStatistics=ON \
-          -DModule_ITKTransform=ON \
-          -DCMAKE_INSTALL_PREFIX="${{ runner.workspace }}/itk-install" \
+        Set-Location "$ws/itk-build"
+        cmake -G "Visual Studio 17 2022" -A x64 `
+          -DCMAKE_BUILD_TYPE=Release `
+          -DBUILD_EXAMPLES=OFF `
+          -DBUILD_TESTING=OFF `
+          -DITK_BUILD_DEFAULT_MODULES=OFF `
+          -DModule_ITKCommon=ON `
+          -DModule_ITKImageFilterBase=ON `
+          -DModule_ITKImageFunction=ON `
+          -DModule_ITKImageGrid=ON `
+          -DModule_ITKImageIntensity=ON `
+          -DModule_ITKSpatialObjects=ON `
+          -DModule_ITKStatistics=ON `
+          -DModule_ITKTransform=ON `
+          -DCMAKE_INSTALL_PREFIX="$ws/itk-install" `
           ../itk-src
         cmake --build . --config Release --target install --parallel 4
 
     - name: Configure Aliza MS
-      shell: bash
+      shell: pwsh
       run: |
-        mkdir build
-        cd build
-        cmake -G "Visual Studio 17 2022" -A x64 \
-          -DALIZA_QT_VERSION=5 \
-          -DCMAKE_BUILD_TYPE=Release \
-          -DITK_DIR="${{ runner.workspace }}/itk-install/lib/cmake/ITK-5.3" \
+        $ws = "${{ runner.workspace }}".Replace('\', '/')
+        New-Item -ItemType Directory -Path build -Force | Out-Null
+        Set-Location build
+        cmake -G "Visual Studio 17 2022" -A x64 `
+          -DALIZA_QT_VERSION=5 `
+          -DCMAKE_BUILD_TYPE=Release `
+          -DITK_DIR="$ws/itk-install/lib/cmake/ITK-5.3" `
           ..
 
     - name: Build Aliza MS
-      shell: bash
+      shell: pwsh
       run: |
-        cd build
-        cmake --build . --config Release --parallel 4
+        cmake --build build --config Release --parallel 4
 
     - name: Package Artifacts
-      shell: bash
+      shell: pwsh
       run: |
-        mkdir -p package
-        cp build/bin/Release/aliza.exe package/
+        New-Item -ItemType Directory -Path package -Force | Out-Null
+        Copy-Item build/bin/Release/aliza.exe -Destination package/
         windeployqt package/aliza.exe --no-translations --compiler-runtime
-        cd package && 7z a ../aliza-radiant-windows-x64.zip *
+        7z a aliza-radiant-windows-x64.zip ./package/*
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4

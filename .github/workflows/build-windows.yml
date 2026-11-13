@@ -64,12 +64,27 @@ jobs:
       shell: pwsh
       run: |
         $ws = "${{ runner.workspace }}".Replace('\', '/')
+        
+        $itkFile = Get-ChildItem -Path "$ws" -Filter "ITKConfig.cmake" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $itkFile) {
+            Write-Error "ITKConfig.cmake não encontrado no workspace!"
+            exit 1
+        }
+        $itkDir = $itkFile.DirectoryName.Replace('\', '/')
+        Write-Output ">> ITK configurado em: $itkDir"
+
+        $qtRoot = "$env:QT_ROOT_DIR".Replace('\', '/')
+        $qt5Dir = "$qtRoot/lib/cmake/Qt5"
+        Write-Output ">> Qt5 configurado em: $qt5Dir"
+
         New-Item -ItemType Directory -Path build -Force | Out-Null
         Set-Location build
         cmake -G "Visual Studio 17 2022" -A x64 `
           -DALIZA_QT_VERSION=5 `
           -DCMAKE_BUILD_TYPE=Release `
-          -DITK_DIR="$ws/itk-install/lib/cmake/ITK-5.3" `
+          -DCMAKE_PREFIX_PATH="$qtRoot;$qtRoot/lib/cmake" `
+          -DQt5_DIR="$qt5Dir" `
+          -DITK_DIR="$itkDir" `
           ..
 
     - name: Build Aliza MS
@@ -81,7 +96,13 @@ jobs:
       shell: pwsh
       run: |
         New-Item -ItemType Directory -Path package -Force | Out-Null
-        Copy-Item build/bin/Release/aliza.exe -Destination package/
+        $exeFile = Get-ChildItem -Path build -Filter "aliza.exe" -Recurse | Select-Object -First 1
+        if (-not $exeFile) {
+            Write-Error "aliza.exe não encontrado após compilação!"
+            exit 1
+        }
+        Write-Output ">> Encontrado aliza.exe em: $($exeFile.FullName)"
+        Copy-Item $exeFile.FullName -Destination package/aliza.exe
         windeployqt package/aliza.exe --no-translations --compiler-runtime
         7z a aliza-radiant-windows-x64.zip ./package/*
 

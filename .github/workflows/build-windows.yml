@@ -1,0 +1,84 @@
+name: Build Windows x64 (RadiAnt UX Edition)
+
+on:
+  push:
+    branches: [ master, feature/radiant-ux-suite ]
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-2022
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install Qt
+      uses: jurplel/install-qt-action@v3
+      with:
+        version: '5.15.2'
+        host: 'windows'
+        target: 'desktop'
+        arch: 'win64_msvc2019_64'
+        modules: 'qtimageformats qtsvg'
+
+    - name: Setup MSVC environment
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x64
+
+    - name: Cache ITK
+      id: cache-itk
+      uses: actions/cache@v3
+      with:
+        path: ${{ runner.workspace }}/itk-install
+        key: ${{ runner.os }}-itk-5.3.0-msvc2022
+
+    - name: Build ITK (if not cached)
+      if: steps.cache-itk.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        mkdir -p ${{ runner.workspace }}/itk-build
+        cd ${{ runner.workspace }}
+        git clone --depth 1 --branch v5.3.0 https://github.com/InsightSoftwareConsortium/ITK.git itk-src
+        cd itk-build
+        cmake -G "Visual Studio 17 2022" -A x64 \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DBUILD_EXAMPLES=OFF \
+          -DBUILD_TESTING=OFF \
+          -DCMAKE_INSTALL_PREFIX="${{ runner.workspace }}/itk-install" \
+          ../itk-src
+        cmake --build . --config Release --target install --parallel 4
+
+    - name: Configure Aliza MS
+      shell: bash
+      run: |
+        mkdir build
+        cd build
+        cmake -G "Visual Studio 17 2022" -A x64 \
+          -DALIZA_QT_VERSION=5 \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DITK_DIR="${{ runner.workspace }}/itk-install/lib/cmake/ITK-5.3" \
+          ..
+
+    - name: Build Aliza MS
+      shell: bash
+      run: |
+        cd build
+        cmake --build . --config Release --parallel 4
+
+    - name: Package Artifacts
+      shell: bash
+      run: |
+        mkdir -p package/platforms package/imageformats package/sqldrivers package/styles
+        cp build/bin/Release/aliza.exe package/
+        windeployqt package/aliza.exe --no-translations --compiler-runtime
+        cd package && 7z a ../aliza-radiant-windows-x64.zip *
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: aliza-radiant-windows-x64
+        path: aliza-radiant-windows-x64.zip

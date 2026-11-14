@@ -896,4 +896,21 @@ bool ImagesBox::eventFilter(QObject * watched, QEvent * event)
 	return QWidget::eventFilter(watched, event);
 }
 
+void ImagesBox::prev_series()
+{
+	if (!listWidget || listWidget->count() == 0) return;
+	int cur = listWidget->currentRow();
+	if (cur > 0)
+		listWidget->setCurrentRow(cur - 1);
+}
+
+void ImagesBox::next_series()
+{
+	if (!listWidget || listWidget->count() == 0) return;
+	int cur = listWidget->currentRow();
+	if (cur < listWidget->count() - 1)
+		listWidget->setCurrentRow(cur + 1);
+}
+
+
 

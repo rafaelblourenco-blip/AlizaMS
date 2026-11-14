@@ -20,6 +20,7 @@ class StudyViewWidget : public QWidget, public Ui::StudyViewWidget
 {
 
 Q_OBJECT
+	friend class RadiantShortcutsManager;
 
 public:
 	StudyViewWidget(bool, bool, float);
@@ -51,12 +52,17 @@ public:
 	QAction * anchor_Action;
 	QList<StudyFrameWidget *> widgets;
 
+public slots:
+	void update_grid(int, int);
+	void update_grid2();
+	void set_next_panel();
+	void set_prev_panel();
+	void toggle_sync_series();
+
 protected:
 	void closeEvent(QCloseEvent*) override;
 
 private slots:
-	void update_grid(int, int);
-	void update_grid2();
 	void set_center_slider(int);
 	void set_width_slider(int);
 	void set_center_spinbox(double);

@@ -5411,4 +5411,11 @@ void Aliza::show_custom_wl_dialog(QWidget * parent_widget)
 	}
 }
 
+void Aliza::set_custom_window_level(double c, double w)
+{
+	center_from_spinbox(c);
+	width_from_spinbox(w);
+}
+
+
 

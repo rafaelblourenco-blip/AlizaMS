@@ -102,6 +102,7 @@ public:
 	void set_anim2Dwidget(AnimWidget*);
 	void apply_wl_preset(int preset);
 	void adjust_wl_delta(double delta_center, double delta_width);
+	void set_custom_window_level(double c, double w);
 	void toggle_invert_lut();
 	void show_custom_wl_dialog(QWidget * parent_widget = nullptr);
 	void connect_slots();

@@ -86,6 +86,12 @@ public:
 	void draw_prtexts(const ImageVariant*);
 	void draw_prgraphics(const ImageVariant*);
 	void draw_shutter(const ImageVariant*);
+	void reset_zoom();
+	void set_zoom_factor(double);
+	void pan_view(int, int);
+	void rotate_view(double);
+	void clear_measurements();
+	void delete_selected_measurement();
 
 public slots:
     void zoom_in();

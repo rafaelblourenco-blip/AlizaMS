@@ -57,6 +57,8 @@ public:
 	void set_contours(const ImageVariant*);
 	int  get_selected_roi_id() const;
 	void update_background_color(bool);
+	void prev_series();
+	void next_series();
 	QDoubleSpinBox * width_doubleSpinBox;
 	QAction * actionNone;
 	QAction * actionClear;

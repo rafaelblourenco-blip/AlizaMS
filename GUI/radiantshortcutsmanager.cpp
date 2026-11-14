@@ -900,17 +900,19 @@ void RadiantShortcutsManager::clear_geometric_transforms()
 void RadiantShortcutsManager::toggle_hud()
 {
     GraphicsView::toggle_hud_display();
-    StudyGraphicsView::toggle_hud_display();
     if (mw && mw->graphicswidget_m && mw->graphicswidget_m->graphicsview)
         mw->graphicswidget_m->graphicsview->viewport()->update();
+    if (mw && mw->studyview)
+        mw->studyview->update();
 }
 
 void RadiantShortcutsManager::toggle_patient_id_hud()
 {
-    GraphicsView::toggle_anonymous_mode();
-    StudyGraphicsView::toggle_anonymous_mode();
+    GraphicsView::toggle_anonymous_display();
     if (mw && mw->graphicswidget_m && mw->graphicswidget_m->graphicsview)
         mw->graphicswidget_m->graphicsview->viewport()->update();
+    if (mw && mw->studyview)
+        mw->studyview->update();
 }
 
 void RadiantShortcutsManager::toggle_cross_reference()

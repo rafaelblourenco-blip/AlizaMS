@@ -3,6 +3,7 @@
 #include "graphicswidget.h"
 #include "aliza.h"
 #include "radiantinputdispatcher.h"
+#include <QScrollBar>
 #include <QtGlobal>
 #include <QColor>
 #include <QRectF>
@@ -2118,4 +2119,48 @@ void GraphicsView::draw_shutter(const ImageVariant * ivariant)
 		}
 	}
 }
+
+void GraphicsView::reset_zoom()
+{
+	if (parent) parent->update_image(1, false);
+	m_scale = 1.0;
+	setTransform(QTransform());
+	update_selection_rect_width();
+}
+
+void GraphicsView::set_zoom_factor(double factor)
+{
+	m_scale = factor;
+	setTransform(QTransform().scale(factor, factor));
+	update_selection_rect_width();
+}
+
+void GraphicsView::pan_view(int dx, int dy)
+{
+	if (horizontalScrollBar())
+		horizontalScrollBar()->setValue(horizontalScrollBar()->value() + dx);
+	if (verticalScrollBar())
+		verticalScrollBar()->setValue(verticalScrollBar()->value() + dy);
+}
+
+void GraphicsView::rotate_view(double angle)
+{
+	if (angle > 0)
+		rotate_cw();
+	else
+		rotate_ccw();
+}
+
+void GraphicsView::clear_measurements()
+{
+	clear_collision_paths();
+	if (viewport())
+		viewport()->update();
+}
+
+void GraphicsView::delete_selected_measurement()
+{
+	clear_measurements();
+}
+
 

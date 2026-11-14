@@ -44,11 +44,15 @@
 #include "aliza.h"
 
 class RadiantShortcutsManager;
+class RadiantConfigDialog;
+class RadiantExportDialog;
 
 class MainWindow : public QMainWindow, private Ui::MainWindow
 {
 Q_OBJECT
 	friend class RadiantShortcutsManager;
+	friend class RadiantConfigDialog;
+	friend class RadiantExportDialog;
 public:
     MainWindow(
 		bool /*3D*/,

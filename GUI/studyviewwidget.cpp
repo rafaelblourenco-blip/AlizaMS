@@ -1225,3 +1225,23 @@ void StudyViewWidget::update_background_color()
 	}
 }
 
+void StudyViewWidget::set_next_panel()
+{
+	if (widgets.isEmpty()) return;
+	int next = (active_id + 1) % widgets.size();
+	set_active_id(next);
+}
+
+void StudyViewWidget::set_prev_panel()
+{
+	if (widgets.isEmpty()) return;
+	int prev = (active_id - 1 + widgets.size()) % widgets.size();
+	set_active_id(prev);
+}
+
+void StudyViewWidget::toggle_sync_series()
+{
+	if (anchor_Action) anchor_Action->trigger();
+}
+
+

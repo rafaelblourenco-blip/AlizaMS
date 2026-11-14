@@ -31,24 +31,25 @@ jobs:
       id: cache-itk
       uses: actions/cache@v4
       with:
-        path: itk-install
-        key: ${{ runner.os }}-itk-5.3.0-modular-msvc2022-v3
+        path: ${{ runner.workspace }}/itk-install
+        key: ${{ runner.os }}-itk-5.3.0-modular-msvc2022-v4
 
     - name: Build Modular ITK (if not cached)
       shell: pwsh
       run: |
-        $itkConfig = Get-ChildItem -Path "$pwd/itk-install" -Filter "ITKConfig.cmake" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($itkConfig) {
-            Write-Output ">> ITK encontrado no cache: $($itkConfig.FullName)"
+        $ws = "${{ runner.workspace }}".Replace('\', '/')
+        $itkConfigFile = Get-ChildItem -Path "$ws" -Filter "ITKConfig.cmake" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($itkConfigFile) {
+            Write-Output ">> ITK disponivel e valido em: $($itkConfigFile.FullName)"
             exit 0
         }
-        Write-Output ">> ITK nao disponivel no cache. Iniciando compilacao modular..."
-        New-Item -ItemType Directory -Path itk-build -Force | Out-Null
-        if (-not (Test-Path "itk-src")) {
+        Write-Output ">> ITK nao encontrado. Iniciando compilacao do ITK 5.3..."
+        New-Item -ItemType Directory -Path "$ws/itk-build" -Force | Out-Null
+        Set-Location "$ws"
+        if (-not (Test-Path "$ws/itk-src")) {
             git clone --depth 1 --branch v5.3.0 https://github.com/InsightSoftwareConsortium/ITK.git itk-src
         }
-        $installDir = "$((Get-Item .).FullName)/itk-install".Replace('\', '/')
-        Set-Location itk-build
+        Set-Location "$ws/itk-build"
         cmake -G "Visual Studio 17 2022" -A x64 `
           -DCMAKE_BUILD_TYPE=Release `
           -DBUILD_EXAMPLES=OFF `
@@ -62,20 +63,18 @@ jobs:
           -DModule_ITKSpatialObjects=ON `
           -DModule_ITKStatistics=ON `
           -DModule_ITKTransform=ON `
-          -DCMAKE_INSTALL_PREFIX="$installDir" `
+          -DCMAKE_INSTALL_PREFIX="$ws/itk-install" `
           ../itk-src
         cmake --build . --config Release --target install --parallel 4
-        Set-Location ..
 
     - name: Configure Aliza MS
       shell: pwsh
       run: |
-        $itkFile = Get-ChildItem -Path "$pwd/itk-install", "$pwd" -Filter "ITKConfig.cmake" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        $ws = "${{ runner.workspace }}".Replace('\', '/')
+        
+        $itkFile = Get-ChildItem -Path "$ws" -Filter "ITKConfig.cmake" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
         if (-not $itkFile) {
-            $itkFile = Get-ChildItem -Path "${{ runner.workspace }}" -Filter "ITKConfig.cmake" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-        }
-        if (-not $itkFile) {
-            Write-Error "ITKConfig.cmake não encontrado!"
+            Write-Error "ITKConfig.cmake nao encontrado no workspace!"
             exit 1
         }
         $itkDir = $itkFile.DirectoryName.Replace('\', '/')
@@ -93,12 +92,37 @@ jobs:
           -DCMAKE_PREFIX_PATH="$qtRoot;$qtRoot/lib/cmake" `
           -DQt5_DIR="$qt5Dir" `
           -DITK_DIR="$itkDir" `
-          ..
+          .. *>&1 | Tee-Object -FilePath "../cmake_config.log"
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "CMake configure falhou com codigo $LASTEXITCODE"
+            exit $LASTEXITCODE
+        }
+
+    - name: Upload Configure Logs on Failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: cmake-configure-logs
+        path: |
+          cmake_config.log
+          build/CMakeFiles/CMakeOutput.log
+          build/CMakeFiles/CMakeError.log
 
     - name: Build Aliza MS
       shell: pwsh
       run: |
-        cmake --build build --config Release --parallel 4
+        cmake --build build --config Release --parallel 4 *>&1 | Tee-Object -FilePath "cmake_build.log"
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "Compilacao do Aliza MS falhou com codigo $LASTEXITCODE"
+            exit $LASTEXITCODE
+        }
+
+    - name: Upload Build Failure Logs
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: msvc-build-logs
+        path: cmake_build.log
 
     - name: Package Artifacts
       shell: pwsh

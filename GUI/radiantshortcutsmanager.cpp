@@ -1,4 +1,8 @@
 #include "radiantshortcutsmanager.h"
+#include "radiantinputdispatcher.h"
+#include "radiantexportdialog.h"
+#include "radiantconfigdialog.h"
+#include "radiantfiltermanager.h"
 #include "mainwindow.h"
 #include "aliza.h"
 #include "graphicswidget.h"
@@ -6,22 +10,38 @@
 #include "studygraphicswidget.h"
 #include "studygraphicsview.h"
 #include "studyviewwidget.h"
-#include "studyframewidget.h"
-#include "imagesbox.h"
 #include "sliderwidget.h"
-#include "animwidget.h"
+#include "imagesbox.h"
+#if QT_VERSION >= QT_VERSION_CHECK(5,0,0)
+#ifdef ALIZA_GL_3_2_CORE
+#include "CG/glwidget-qt5-core.h"
+#else
+#include "CG/glwidget-qt5.h"
+#endif
+#else
+#ifdef ALIZA_GL_3_2_CORE
+#include "CG/glwidget-qt4-core.h"
+#else
+#include "CG/glwidget-qt4.h"
+#endif
+#endif
 
-#include <QScrollBar>
 #include <QApplication>
-#include <QMenuBar>
-#include <QStatusBar>
-#include <QDockWidget>
-#include <QTabWidget>
-#include <algorithm>
+#include <QMenu>
+#include <QToolButton>
+#include <QFileDialog>
+#include <QMessageBox>
+#include <QInputDialog>
+#include <QDir>
+#include <QTimer>
+#include <QStorageInfo>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 RadiantShortcutsManager::RadiantShortcutsManager(MainWindow * mainWindow, QObject * parent)
-    : QObject(parent)
-    , mw(mainWindow)
+    : QObject(parent ? parent : mainWindow), mw(mainWindow)
 {
     connect(RadiantInputDispatcher::instance(), SIGNAL(tool_changed(RadiantTool)),
             this, SLOT(on_dispatcher_tool_changed(RadiantTool)));
@@ -31,7 +51,6 @@ void RadiantShortcutsManager::setup_shortcut(const QKeySequence & seq, const cha
 {
     if (!mw) return;
     QShortcut * sc = new QShortcut(seq, mw);
-    sc->setContext(Qt::ApplicationShortcut);
     sc->setAutoRepeat(autoRepeat);
     connect(sc, SIGNAL(activated()), this, slot);
 }
@@ -40,238 +59,80 @@ void RadiantShortcutsManager::initialize_shortcuts()
 {
     if (!mw) return;
 
-    // -------------------------------------------------------------
-    // Create Tool Actions & Action Group
-    // -------------------------------------------------------------
-    tool_action_group = new QActionGroup(this);
-    tool_action_group->setExclusive(true);
+    // A. Tools
+    setup_shortcut(QKeySequence(Qt::Key_B), SLOT(select_tool_browse()), false);
+    setup_shortcut(QKeySequence(Qt::Key_W), SLOT(select_tool_wl()), false);
+    setup_shortcut(QKeySequence(Qt::Key_M), SLOT(select_tool_pan()), false);
+    setup_shortcut(QKeySequence(Qt::Key_Z), SLOT(select_tool_zoom()), false);
+    setup_shortcut(QKeySequence(Qt::Key_L), SLOT(select_tool_length()), false);
+    setup_shortcut(QKeySequence(Qt::Key_E), SLOT(select_tool_ellipse()), false);
+    setup_shortcut(QKeySequence(Qt::Key_G), SLOT(select_tool_closed_poly()), false);
+    setup_shortcut(QKeySequence(Qt::Key_O), SLOT(select_tool_open_poly()), false);
+    setup_shortcut(QKeySequence(Qt::Key_A), SLOT(select_tool_angle()), false);
+    setup_shortcut(QKeySequence(Qt::Key_C), SLOT(select_tool_cobb()), false);
+    setup_shortcut(QKeySequence(Qt::Key_D), SLOT(select_tool_deviation()), false);
+    setup_shortcut(QKeySequence(Qt::Key_Y), SLOT(select_tool_arrow()), false);
+    setup_shortcut(QKeySequence(Qt::Key_P), SLOT(select_tool_pen()), false);
 
-    action_browse = new QAction(QIcon(":/bitmaps/align.svg"), QString("Browse Series (B)"), this);
-    action_browse->setCheckable(true);
-    action_browse->setChecked(true);
-    tool_action_group->addAction(action_browse);
-    connect(action_browse, SIGNAL(triggered()), this, SLOT(select_tool_browse()));
-
-    action_wl = new QAction(QIcon(":/bitmaps/circle1.svg"), QString("Window/Level (W)"), this);
-    action_wl->setCheckable(true);
-    tool_action_group->addAction(action_wl);
-    connect(action_wl, SIGNAL(triggered()), this, SLOT(select_tool_wl()));
-
-    action_pan = new QAction(QIcon(":/bitmaps/cursor.svg"), QString("Pan Image (M)"), this);
-    action_pan->setCheckable(true);
-    tool_action_group->addAction(action_pan);
-    connect(action_pan, SIGNAL(triggered()), this, SLOT(select_tool_pan()));
-
-    action_zoom = new QAction(QIcon(":/bitmaps/zoomin.svg"), QString("Zoom Image (Z)"), this);
-    action_zoom->setCheckable(true);
-    tool_action_group->addAction(action_zoom);
-    connect(action_zoom, SIGNAL(triggered()), this, SLOT(select_tool_zoom()));
-
-    action_length = new QAction(QIcon(":/bitmaps/distance.svg"), QString("Length Ruler (L)"), this);
-    action_length->setCheckable(true);
-    tool_action_group->addAction(action_length);
-    connect(action_length, SIGNAL(triggered()), this, SLOT(select_tool_length()));
-
-    action_ellipse = new QAction(QIcon(":/bitmaps/circle1.svg"), QString("Ellipse ROI (E)"), this);
-    action_ellipse->setCheckable(true);
-    tool_action_group->addAction(action_ellipse);
-    connect(action_ellipse, SIGNAL(triggered()), this, SLOT(select_tool_ellipse()));
-
-    action_closed_poly = new QAction(QIcon(":/bitmaps/group.svg"), QString("Closed Polygon (G)"), this);
-    action_closed_poly->setCheckable(true);
-    tool_action_group->addAction(action_closed_poly);
-    connect(action_closed_poly, SIGNAL(triggered()), this, SLOT(select_tool_closed_poly()));
-
-    action_open_poly = new QAction(QIcon(":/bitmaps/group.svg"), QString("Open Polygon (O)"), this);
-    action_open_poly->setCheckable(true);
-    tool_action_group->addAction(action_open_poly);
-    connect(action_open_poly, SIGNAL(triggered()), this, SLOT(select_tool_open_poly()));
-
-    action_angle = new QAction(QIcon(":/bitmaps/cross.svg"), QString("Angle (A)"), this);
-    action_angle->setCheckable(true);
-    tool_action_group->addAction(action_angle);
-    connect(action_angle, SIGNAL(triggered()), this, SLOT(select_tool_angle()));
-
-    action_cobb = new QAction(QIcon(":/bitmaps/cross.svg"), QString("Cobb Angle (C)"), this);
-    action_cobb->setCheckable(true);
-    tool_action_group->addAction(action_cobb);
-    connect(action_cobb, SIGNAL(triggered()), this, SLOT(select_tool_cobb()));
-
-    action_deviation = new QAction(QIcon(":/bitmaps/chart0.svg"), QString("Deviation (D)"), this);
-    action_deviation->setCheckable(true);
-    tool_action_group->addAction(action_deviation);
-    connect(action_deviation, SIGNAL(triggered()), this, SLOT(select_tool_deviation()));
-
-    action_arrow = new QAction(QIcon(":/bitmaps/right0.svg"), QString("Arrow (Y)"), this);
-    action_arrow->setCheckable(true);
-    tool_action_group->addAction(action_arrow);
-    connect(action_arrow, SIGNAL(triggered()), this, SLOT(select_tool_arrow()));
-
-    action_pen = new QAction(QIcon(":/bitmaps/tool.svg"), QString("Pen (P)"), this);
-    action_pen->setCheckable(true);
-    tool_action_group->addAction(action_pen);
-    connect(action_pen, SIGNAL(triggered()), this, SLOT(select_tool_pen()));
-
-    // -------------------------------------------------------------
-    // Additional Direct Toolbar Actions
-    // -------------------------------------------------------------
-    action_open_file = new QAction(QIcon(":/bitmaps/file.svg"), QString("Open File (Ctrl+O)"), this);
-    connect(action_open_file, SIGNAL(triggered()), this, SLOT(trigger_open_file()));
-
-    action_open_dir = new QAction(QIcon(":/bitmaps/folder.svg"), QString("Scan Folder (Ctrl+Shift+O)"), this);
-    connect(action_open_dir, SIGNAL(triggered()), this, SLOT(trigger_scan_folder()));
-
-    action_preset_0 = new QAction(QString("Default (0)"), this);
-    connect(action_preset_0, SIGNAL(triggered()), this, SLOT(apply_preset_0()));
-
-    action_preset_1 = new QAction(QString("Full (1)"), this);
-    connect(action_preset_1, SIGNAL(triggered()), this, SLOT(apply_preset_1()));
-
-    action_preset_2 = new QAction(QString("Abdomen (2)"), this);
-    connect(action_preset_2, SIGNAL(triggered()), this, SLOT(apply_preset_2()));
-
-    action_preset_3 = new QAction(QString("Angio (3)"), this);
-    connect(action_preset_3, SIGNAL(triggered()), this, SLOT(apply_preset_3()));
-
-    action_preset_4 = new QAction(QString("Bone (4)"), this);
-    connect(action_preset_4, SIGNAL(triggered()), this, SLOT(apply_preset_4()));
-
-    action_preset_5 = new QAction(QString("Brain (5)"), this);
-    connect(action_preset_5, SIGNAL(triggered()), this, SLOT(apply_preset_5()));
-
-    action_preset_6 = new QAction(QString("Mediastinum (6)"), this);
-    connect(action_preset_6, SIGNAL(triggered()), this, SLOT(apply_preset_6()));
-
-    action_preset_7 = new QAction(QString("Lung (7)"), this);
-    connect(action_preset_7, SIGNAL(triggered()), this, SLOT(apply_preset_7()));
-
-    action_invert_lut = new QAction(QIcon(":/bitmaps/reload.svg"), QString("Invert LUT (F11)"), this);
-    connect(action_invert_lut, SIGNAL(triggered()), this, SLOT(toggle_invert_lut()));
-
-    action_sync = new QAction(QIcon(":/bitmaps/anchor.svg"), QString("Sync Series (F5)"), this);
-    connect(action_sync, SIGNAL(triggered()), this, SLOT(toggle_series_sync()));
-
-    action_cine = new QAction(QIcon(":/bitmaps/play.svg"), QString("Cine Play/Stop (Space)"), this);
-    connect(action_cine, SIGNAL(triggered()), this, SLOT(toggle_cine()));
-
-    action_split = new QAction(QIcon(":/bitmaps/grid.svg"), QString("Split Screen (F4)"), this);
-    connect(action_split, SIGNAL(triggered()), this, SLOT(toggle_split_screen()));
-
-    action_mpr_axial = new QAction(QIcon(":/bitmaps/2dz2.svg"), QString("MPR Axial (Ctrl+Alt+3)"), this);
-    connect(action_mpr_axial, SIGNAL(triggered()), this, SLOT(trigger_mpr_axial()));
-
-    action_3d_vr = new QAction(QIcon(":/bitmaps/3d.svg"), QString("3D VR (F3)"), this);
-    connect(action_3d_vr, SIGNAL(triggered()), this, SLOT(trigger_3d_vr()));
-
-    // -------------------------------------------------------------
-    // Register Global Application Shortcuts
-    // -------------------------------------------------------------
-    // A. Tool Selection
-    setup_shortcut(QKeySequence(Qt::Key_B), SLOT(select_tool_browse()));
-    setup_shortcut(QKeySequence(Qt::Key_W), SLOT(select_tool_wl()));
-    setup_shortcut(QKeySequence(Qt::Key_M), SLOT(select_tool_pan()));
-    setup_shortcut(QKeySequence(Qt::Key_Z), SLOT(select_tool_zoom()));
-    setup_shortcut(QKeySequence(Qt::Key_L), SLOT(select_tool_length()));
-    setup_shortcut(QKeySequence(Qt::Key_E), SLOT(select_tool_ellipse()));
-    setup_shortcut(QKeySequence(Qt::Key_G), SLOT(select_tool_closed_poly()));
-    setup_shortcut(QKeySequence(Qt::Key_O), SLOT(select_tool_open_poly()));
-    setup_shortcut(QKeySequence(Qt::Key_A), SLOT(select_tool_angle()));
-    setup_shortcut(QKeySequence(Qt::Key_C), SLOT(select_tool_cobb()));
-    setup_shortcut(QKeySequence(Qt::Key_D), SLOT(select_tool_deviation()));
-    setup_shortcut(QKeySequence(Qt::Key_Y), SLOT(select_tool_arrow()));
-    setup_shortcut(QKeySequence(Qt::Key_P), SLOT(select_tool_pen()));
-
-    // B. Presets & Window/Level
-    setup_shortcut(QKeySequence(Qt::Key_0), SLOT(apply_preset_0()));
-    setup_shortcut(QKeySequence(Qt::Key_1), SLOT(apply_preset_1()));
-    setup_shortcut(QKeySequence(Qt::Key_2), SLOT(apply_preset_2()));
-    setup_shortcut(QKeySequence(Qt::Key_3), SLOT(apply_preset_3()));
-    setup_shortcut(QKeySequence(Qt::Key_4), SLOT(apply_preset_4()));
-    setup_shortcut(QKeySequence(Qt::Key_5), SLOT(apply_preset_5()));
-    setup_shortcut(QKeySequence(Qt::Key_6), SLOT(apply_preset_6()));
-    setup_shortcut(QKeySequence(Qt::Key_7), SLOT(apply_preset_7()));
-    setup_shortcut(QKeySequence(Qt::Key_8), SLOT(apply_preset_8()));
-    setup_shortcut(QKeySequence(Qt::Key_9), SLOT(apply_preset_9()));
+    // B. Presets (0 to 9)
+    setup_shortcut(QKeySequence(Qt::Key_0), SLOT(apply_preset_0()), false);
+    setup_shortcut(QKeySequence(Qt::Key_1), SLOT(apply_preset_1()), false);
+    setup_shortcut(QKeySequence(Qt::Key_2), SLOT(apply_preset_2()), false);
+    setup_shortcut(QKeySequence(Qt::Key_3), SLOT(apply_preset_3()), false);
+    setup_shortcut(QKeySequence(Qt::Key_4), SLOT(apply_preset_4()), false);
+    setup_shortcut(QKeySequence(Qt::Key_5), SLOT(apply_preset_5()), false);
+    setup_shortcut(QKeySequence(Qt::Key_6), SLOT(apply_preset_6()), false);
+    setup_shortcut(QKeySequence(Qt::Key_7), SLOT(apply_preset_7()), false);
+    setup_shortcut(QKeySequence(Qt::Key_8), SLOT(apply_preset_8()), false);
+    setup_shortcut(QKeySequence(Qt::Key_9), SLOT(apply_preset_9()), false);
     setup_shortcut(QKeySequence(Qt::Key_F11), SLOT(toggle_invert_lut()), false);
     setup_shortcut(QKeySequence(Qt::CTRL + Qt::Key_F11), SLOT(show_custom_wl_dialog()), false);
 
-    // C. Navigation & Cine
-    setup_shortcut(QKeySequence(Qt::Key_Up), SLOT(prev_image()));
-    setup_shortcut(QKeySequence(Qt::Key_Down), SLOT(next_image()));
-    setup_shortcut(QKeySequence(Qt::Key_PageUp), SLOT(prev_10_images()));
-    setup_shortcut(QKeySequence(Qt::Key_PageDown), SLOT(next_10_images()));
-    setup_shortcut(QKeySequence(Qt::Key_Left), SLOT(prev_series()));
-    setup_shortcut(QKeySequence(Qt::Key_Right), SLOT(next_series()));
-    setup_shortcut(QKeySequence(Qt::Key_Home), SLOT(first_image_or_series()));
-    setup_shortcut(QKeySequence(Qt::Key_End), SLOT(last_image_or_series()));
-    setup_shortcut(QKeySequence(Qt::Key_Tab), SLOT(next_panel()));
-    setup_shortcut(QKeySequence(Qt::SHIFT + Qt::Key_Backtab), SLOT(prev_panel()));
-    setup_shortcut(QKeySequence(Qt::SHIFT + Qt::Key_Tab), SLOT(prev_panel()));
+    // C. Navigation, Zoom, Transformations & Cine
+    setup_shortcut(QKeySequence(Qt::Key_Up), SLOT(prev_image()), true);
+    setup_shortcut(QKeySequence(Qt::Key_Down), SLOT(next_image()), true);
+    setup_shortcut(QKeySequence(Qt::Key_PageUp), SLOT(prev_10_images()), true);
+    setup_shortcut(QKeySequence(Qt::Key_PageDown), SLOT(next_10_images()), true);
+    setup_shortcut(QKeySequence(Qt::Key_Left), SLOT(prev_series()), false);
+    setup_shortcut(QKeySequence(Qt::Key_Right), SLOT(next_series()), false);
+    setup_shortcut(QKeySequence(Qt::Key_Home), SLOT(first_image_or_series()), false);
+    setup_shortcut(QKeySequence(Qt::Key_End), SLOT(last_image_or_series()), false);
+    setup_shortcut(QKeySequence(Qt::Key_Tab), SLOT(next_panel()), false);
+    setup_shortcut(QKeySequence(Qt::SHIFT + Qt::Key_Tab), SLOT(prev_panel()), false);
     setup_shortcut(QKeySequence(Qt::Key_Space), SLOT(toggle_cine()), false);
 
-    // C. Zoom & Pan
-    setup_shortcut(QKeySequence(Qt::CTRL + Qt::Key_0), SLOT(zoom_fit()));
-    setup_shortcut(QKeySequence(Qt::CTRL + Qt::Key_1), SLOT(zoom_100()));
-    setup_shortcut(QKeySequence(Qt::CTRL + Qt::Key_2), SLOT(zoom_200()));
-    setup_shortcut(QKeySequence(Qt::CTRL + Qt::Key_3), SLOT(zoom_400()));
-    setup_shortcut(QKeySequence(Qt::CTRL + Qt::Key_4), SLOT(zoom_800()));
-    setup_shortcut(QKeySequence(Qt::CTRL + Qt::Key_Plus), SLOT(zoom_in()));
-    setup_shortcut(QKeySequence(Qt::CTRL + Qt::Key_Equal), SLOT(zoom_in()));
-    setup_shortcut(QKeySequence(Qt::CTRL + Qt::Key_Minus), SLOT(zoom_out()));
-    setup_shortcut(QKeySequence(Qt::CTRL + Qt::Key_Up), SLOT(pan_up()));
-    setup_shortcut(QKeySequence(Qt::CTRL + Qt::Key_Down), SLOT(pan_down()));
-    setup_shortcut(QKeySequence(Qt::CTRL + Qt::Key_Left), SLOT(pan_left()));
-    setup_shortcut(QKeySequence(Qt::CTRL + Qt::Key_Right), SLOT(pan_right()));
+    setup_shortcut(QKeySequence(Qt::CTRL + Qt::Key_0), SLOT(zoom_fit()), false);
+    setup_shortcut(QKeySequence(Qt::CTRL + Qt::Key_1), SLOT(zoom_100()), false);
+    setup_shortcut(QKeySequence(Qt::CTRL + Qt::Key_2), SLOT(zoom_200()), false);
+    setup_shortcut(QKeySequence(Qt::CTRL + Qt::Key_3), SLOT(zoom_400()), false);
+    setup_shortcut(QKeySequence(Qt::CTRL + Qt::Key_4), SLOT(zoom_800()), false);
+    setup_shortcut(QKeySequence(Qt::CTRL + Qt::Key_Plus), SLOT(zoom_in()), true);
+    setup_shortcut(QKeySequence(Qt::CTRL + Qt::Key_Minus), SLOT(zoom_out()), true);
 
-    // C. Transformations & Filters
     setup_shortcut(QKeySequence(Qt::CTRL + Qt::Key_BracketLeft), SLOT(rotate_90_ccw()), false);
     setup_shortcut(QKeySequence(Qt::CTRL + Qt::Key_BracketRight), SLOT(rotate_90_cw()), false);
     setup_shortcut(QKeySequence(Qt::CTRL + Qt::SHIFT + Qt::Key_BracketLeft), SLOT(flip_horizontal()), false);
     setup_shortcut(QKeySequence(Qt::CTRL + Qt::SHIFT + Qt::Key_BracketRight), SLOT(flip_vertical()), false);
     setup_shortcut(QKeySequence(Qt::CTRL + Qt::SHIFT + Qt::Key_Backslash), SLOT(clear_geometric_transforms()), false);
-    setup_shortcut(QKeySequence(Qt::Key_I), SLOT(toggle_sharpen()), false);
-    setup_shortcut(QKeySequence(Qt::SHIFT + Qt::Key_I), SLOT(disable_sharpen()), false);
 
-    // D. Interface & Overlays
+    // Filters
+    setup_shortcut(QKeySequence(Qt::Key_I), SLOT(next_sharpen_filter()), false);
+    setup_shortcut(QKeySequence(Qt::SHIFT + Qt::Key_I), SLOT(apply_filter_none()), false);
+    setup_shortcut(QKeySequence(Qt::CTRL + Qt::Key_I), SLOT(next_filter()), false);
+    setup_shortcut(QKeySequence(Qt::CTRL + Qt::SHIFT + Qt::Key_I), SLOT(prev_filter()), false);
+
+    // D. Interface, HUD, MPR, 3D
     setup_shortcut(QKeySequence(Qt::Key_F12), SLOT(toggle_hud()), false);
     setup_shortcut(QKeySequence(Qt::SHIFT + Qt::Key_F12), SLOT(toggle_patient_id_hud()), false);
-    setup_shortcut(QKeySequence(Qt::CTRL + Qt::Key_F12), SLOT(toggle_cross_reference()), false);
-    setup_shortcut(QKeySequence(Qt::ALT + Qt::Key_F12), SLOT(toggle_measurements()), false);
     setup_shortcut(QKeySequence(Qt::Key_F5), SLOT(toggle_series_sync()), false);
-    setup_shortcut(QKeySequence(Qt::Key_F4), SLOT(toggle_split_screen()), false);
-    setup_shortcut(QKeySequence(Qt::SHIFT + Qt::Key_F4), SLOT(close_split_screen()), false);
-    setup_shortcut(QKeySequence(Qt::CTRL + Qt::Key_M), SLOT(maximize_active_panel()), false);
-    setup_shortcut(QKeySequence(Qt::Key_F), SLOT(toggle_full_screen()), false);
-    setup_shortcut(QKeySequence(Qt::SHIFT + Qt::ALT + Qt::Key_Return), SLOT(toggle_distraction_free()), false);
-    setup_shortcut(QKeySequence(Qt::SHIFT + Qt::ALT + Qt::Key_Enter), SLOT(toggle_distraction_free()), false);
-    setup_shortcut(QKeySequence(Qt::CTRL + Qt::ALT + Qt::Key_F2), SLOT(toggle_thumbnail_strip()), false);
-    setup_shortcut(QKeySequence(Qt::CTRL + Qt::ALT + Qt::Key_F3), SLOT(toggle_top_toolbar()), false);
-    setup_shortcut(QKeySequence(Qt::CTRL + Qt::ALT + Qt::Key_1), SLOT(trigger_mpr_coronal()), false);
-    setup_shortcut(QKeySequence(Qt::CTRL + Qt::ALT + Qt::Key_2), SLOT(trigger_mpr_sagittal()), false);
-    setup_shortcut(QKeySequence(Qt::CTRL + Qt::ALT + Qt::Key_3), SLOT(trigger_mpr_axial()), false);
-    setup_shortcut(QKeySequence(Qt::Key_F3), SLOT(trigger_3d_vr()), false);
-    setup_shortcut(QKeySequence(Qt::CTRL + Qt::ALT + Qt::Key_F), SLOT(trigger_fusion()), false);
-    setup_shortcut(QKeySequence(Qt::CTRL + Qt::ALT + Qt::Key_T), SLOT(trigger_dicom_tags()), false);
-    setup_shortcut(QKeySequence(Qt::CTRL + Qt::Key_O), SLOT(trigger_open_file()), false);
-    setup_shortcut(QKeySequence(Qt::CTRL + Qt::SHIFT + Qt::Key_O), SLOT(trigger_scan_folder()), false);
+    setup_shortcut(QKeySequence(Qt::Key_F3), SLOT(trigger_3d_vr_window()), false);
+    setup_shortcut(QKeySequence(Qt::CTRL + Qt::Key_O), SLOT(trigger_open_cd()), false);
+    setup_shortcut(QKeySequence(Qt::CTRL + Qt::SHIFT + Qt::Key_O), SLOT(trigger_open_dir()), false);
+    setup_shortcut(QKeySequence(Qt::CTRL + Qt::Key_E), SLOT(trigger_export()), false);
 
-    // D. ROIs deletion
+    // ROIs deletion
     setup_shortcut(QKeySequence(Qt::Key_Delete), SLOT(delete_selected_roi()), false);
     setup_shortcut(QKeySequence(Qt::SHIFT + Qt::Key_Delete), SLOT(delete_all_rois_image()), false);
-    setup_shortcut(QKeySequence(Qt::CTRL + Qt::Key_Delete), SLOT(delete_all_rois_series()), false);
-    setup_shortcut(QKeySequence(Qt::CTRL + Qt::SHIFT + Qt::Key_Delete), SLOT(delete_all_rois_all()), false);
-
-    // D. MPR 3D Mode Shortcuts
-    setup_shortcut(QKeySequence(Qt::Key_F2), SLOT(mpr3d_toggle_mode()), false);
-    setup_shortcut(QKeySequence(Qt::CTRL + Qt::Key_F3), SLOT(mpr3d_center_axes()), false);
-    setup_shortcut(QKeySequence(Qt::Key_H), SLOT(mpr3d_slab_thickness()), false);
-    setup_shortcut(QKeySequence(Qt::Key_Plus), SLOT(mpr3d_increase_slab()));
-    setup_shortcut(QKeySequence(Qt::Key_Minus), SLOT(mpr3d_decrease_slab()));
-    setup_shortcut(QKeySequence(Qt::Key_R), SLOT(mpr3d_rotate()), false);
-    setup_shortcut(QKeySequence(Qt::Key_T), SLOT(mpr3d_roll()), false);
-    setup_shortcut(QKeySequence(Qt::Key_Return), SLOT(mpr3d_maximize()), false);
-    setup_shortcut(QKeySequence(Qt::Key_Enter), SLOT(mpr3d_maximize()), false);
-    setup_shortcut(QKeySequence(Qt::CTRL + Qt::Key_R), SLOT(mpr3d_reset()), false);
 }
 
 void RadiantShortcutsManager::create_radiant_toolbar(QToolBar * parentToolbar)
@@ -289,198 +150,443 @@ void RadiantShortcutsManager::create_radiant_toolbar(QToolBar * parentToolbar)
     }
 
     radiant_toolbar->setIconSize(QSize(22, 22));
+    radiant_toolbar->setMovable(false);
 
-    // File Operations
+    tool_action_group = new QActionGroup(this);
+
+    // Helper to create a ToolButton with menu
+    auto createMenuButton = [&](QAction * act, QMenu * menu, bool instant = false) -> QToolButton* {
+        QToolButton * btn = new QToolButton(radiant_toolbar);
+        btn->setDefaultAction(act);
+        if (menu) {
+            btn->setMenu(menu);
+            btn->setPopupMode(instant ? QToolButton::InstantPopup : QToolButton::MenuButtonPopup);
+        }
+        radiant_toolbar->addWidget(btn);
+        return btn;
+    };
+
+    // 1. Abrir exame da pasta
+    action_open_dir = new QAction(QIcon(":/bitmaps/radiant_open_folder.svg"), QString("Abrir pasta DICOM (Ctrl+Shift+O)"), this);
+    connect(action_open_dir, SIGNAL(triggered()), this, SLOT(trigger_open_dir()));
     radiant_toolbar->addAction(action_open_dir);
-    radiant_toolbar->addAction(action_open_file);
+
+    // 2. Abrir exame do CD / DVD
+    action_open_cd = new QAction(QIcon(":/bitmaps/radiant_open_cd.svg"), QString("Abrir exame de CD/DVD"), this);
+    connect(action_open_cd, SIGNAL(triggered()), this, SLOT(trigger_open_cd()));
+    radiant_toolbar->addAction(action_open_cd);
+
+    // 3. Baixar exame do servidor DICOM
+    action_pacs_download = new QAction(QIcon(":/bitmaps/radiant_pacs_download.svg"), QString("Baixar exame do servidor DICOM / PACS"), this);
+    connect(action_pacs_download, SIGNAL(triggered()), this, SLOT(trigger_pacs_download()));
+    radiant_toolbar->addAction(action_pacs_download);
+
+    // 4. Gravar / Exportar exame aberto
+    action_export = new QAction(QIcon(":/bitmaps/radiant_export.svg"), QString("Gravar / Exportar exame (Ctrl+E)"), this);
+    connect(action_export, SIGNAL(triggered()), this, SLOT(trigger_export()));
+    radiant_toolbar->addAction(action_export);
+
     radiant_toolbar->addSeparator();
 
-    // Primary Mouse Tools
-    radiant_toolbar->addAction(action_browse);
-    radiant_toolbar->addAction(action_wl);
+    // 5. Configurar GRID de exibição das imagens
+    action_grid = new QAction(QIcon(":/bitmaps/radiant_grid.svg"), QString("Configurar Grid de exibição"), this);
+    QMenu * gridMenu = new QMenu(radiant_toolbar);
+    auto addGridAction = [&](int r, int c) {
+        QAction * a = gridMenu->addAction(QString("%1 x %2").arg(r).arg(c));
+        connect(a, &QAction::triggered, [this, r, c]() { this->set_grid_layout(r, c); });
+    };
+    addGridAction(1, 1);
+    addGridAction(2, 1);
+    addGridAction(1, 2);
+    addGridAction(2, 2);
+    addGridAction(3, 2);
+    addGridAction(2, 3);
+    addGridAction(3, 3);
+    addGridAction(2, 4);
+    addGridAction(5, 4);
+    addGridAction(5, 5);
+    createMenuButton(action_grid, gridMenu, true);
+
+    // 6. Ícone de Letra ("A")
+    action_text_overlay = new QAction(QIcon(":/bitmaps/radiant_text_overlay.svg"), QString("Anotações de Texto / HUD (F12)"), this);
+    connect(action_text_overlay, SIGNAL(triggered()), this, SLOT(toggle_hud()));
+    QMenu * textMenu = new QMenu(radiant_toolbar);
+    QAction * actHudToggle = textMenu->addAction(QString("Mostrar/ocultar todas as anotações (F12)"));
+    connect(actHudToggle, SIGNAL(triggered()), this, SLOT(toggle_hud()));
+    QAction * actAnonToggle = textMenu->addAction(QString("Modo Anônimo / Ocultar identificação (Shift+F12)"));
+    connect(actAnonToggle, SIGNAL(triggered()), this, SLOT(toggle_patient_id_hud()));
+    textMenu->addSeparator();
+    QAction * actConfigHud = textMenu->addAction(QString("Configurar atributos exibidos..."));
+    connect(actConfigHud, SIGNAL(triggered()), this, SLOT(trigger_config_dialog()));
+    createMenuButton(action_text_overlay, textMenu, false);
+
+    // 7. Funções dos botões do mouse & ordenação
+    action_mouse_config = new QAction(QIcon(":/bitmaps/radiant_mouse.svg"), QString("Funções do Mouse e Ordenação"), this);
+    QMenu * mouseMenu = new QMenu(radiant_toolbar);
+    mouseMenu->addAction(QString("Botão Esquerdo: Ação da Ferramenta Ativa"));
+    mouseMenu->addAction(QString("Botão do Meio (Scroll): Janelamento WL / WW"));
+    mouseMenu->addAction(QString("Botão Direito: Zoom Contínuo"));
+    mouseMenu->addAction(QString("Roda do Mouse: Navegar Fatias"));
+    mouseMenu->addSeparator();
+    QMenu * sortMenu = mouseMenu->addMenu(QString("Ordenação das Imagens"));
+    sortMenu->addAction(QString("Número da Instância (Instance Number)"))->setCheckable(true);
+    sortMenu->addAction(QString("Posição Espacial (Spatial Position)"))->setChecked(true);
+    sortMenu->addAction(QString("Horário de Aquisição (Acquisition Time)"));
+    sortMenu->addAction(QString("Nome do Arquivo (File Name)"));
+    createMenuButton(action_mouse_config, mouseMenu, true);
+
+    radiant_toolbar->addSeparator();
+
+    // 8. Botão de Janelamento (WL / WW)
+    action_wl = new QAction(QIcon(":/bitmaps/radiant_wl.svg"), QString("Janelamento / Brilho e Contraste (W)"), this);
+    action_wl->setCheckable(true);
+    tool_action_group->addAction(action_wl);
+    connect(action_wl, SIGNAL(triggered()), this, SLOT(select_tool_wl()));
+
+    QMenu * wlMenu = new QMenu(radiant_toolbar);
+    wlMenu->addAction(QString("0: Reset (Original DICOM)"), this, SLOT(apply_preset_0()));
+    wlMenu->addAction(QString("1: Alcance Dinâmico Total"), this, SLOT(apply_preset_1()));
+    wlMenu->addAction(QString("2: Abdome TC (WL: 40, WW: 350)"), this, SLOT(apply_preset_2()));
+    wlMenu->addAction(QString("3: Osso TC (WL: 300, WW: 1500)"), this, SLOT(apply_preset_3()));
+    wlMenu->addAction(QString("4: Cérebro TC (WL: 40, WW: 80)"), this, SLOT(apply_preset_4()));
+    wlMenu->addAction(QString("5: Pulmão TC (WL: -600, WW: 1500)"), this, SLOT(apply_preset_5()));
+    wlMenu->addAction(QString("6: Mediastino TC (WL: 50, WW: 350)"), this, SLOT(apply_preset_6()));
+    wlMenu->addAction(QString("7: Pélvis TC (WL: 40, WW: 400)"), this, SLOT(apply_preset_7()));
+    wlMenu->addAction(QString("8: Angio TC (WL: 300, WW: 600)"), this, SLOT(apply_preset_8()));
+    wlMenu->addAction(QString("9: Customizado / PET"), this, SLOT(apply_preset_9()));
+    wlMenu->addSeparator();
+    wlMenu->addAction(QString("Janelamento Manual... (Ctrl+F11)"), this, SLOT(show_custom_wl_dialog()));
+    wlMenu->addAction(QString("Inverter Negativo / LUT (F11)"), this, SLOT(toggle_invert_lut()));
+    createMenuButton(action_wl, wlMenu, false);
+
+    // 9. Botão Pan
+    action_pan = new QAction(QIcon(":/bitmaps/radiant_pan.svg"), QString("Mover Imagem / Pan (M)"), this);
+    action_pan->setCheckable(true);
+    tool_action_group->addAction(action_pan);
+    connect(action_pan, SIGNAL(triggered()), this, SLOT(select_tool_pan()));
     radiant_toolbar->addAction(action_pan);
-    radiant_toolbar->addAction(action_zoom);
-    radiant_toolbar->addAction(action_length);
-    radiant_toolbar->addAction(action_ellipse);
-    radiant_toolbar->addAction(action_angle);
-    radiant_toolbar->addAction(action_cobb);
+
+    // 10. Botão Zoom
+    action_zoom = new QAction(QIcon(":/bitmaps/radiant_zoom.svg"), QString("Zoom Interativo (Z)"), this);
+    action_zoom->setCheckable(true);
+    tool_action_group->addAction(action_zoom);
+    connect(action_zoom, SIGNAL(triggered()), this, SLOT(select_tool_zoom()));
+
+    QMenu * zoomMenu = new QMenu(radiant_toolbar);
+    zoomMenu->addAction(QString("Ajustar à Janela (Ctrl+0)"), this, SLOT(zoom_fit()));
+    zoomMenu->addAction(QString("Zoom 100% (Ctrl+1)"), this, SLOT(zoom_100()));
+    zoomMenu->addAction(QString("Zoom 200% (Ctrl+2)"), this, SLOT(zoom_200()));
+    zoomMenu->addAction(QString("Zoom 400% (Ctrl+3)"), this, SLOT(zoom_400()));
+    zoomMenu->addAction(QString("Zoom 800% (Ctrl+4)"), this, SLOT(zoom_800()));
+    createMenuButton(action_zoom, zoomMenu, false);
+
+    // 11. Botão de Medidas (Length padrão + dropdown de medidas avançadas)
+    action_measure = new QAction(QIcon(":/bitmaps/radiant_measure.svg"), QString("Medição Linear / Régua (L)"), this);
+    action_measure->setCheckable(true);
+    tool_action_group->addAction(action_measure);
+    connect(action_measure, SIGNAL(triggered()), this, SLOT(select_tool_length()));
+
+    QMenu * measureMenu = new QMenu(radiant_toolbar);
+    measureMenu->addAction(QString("Distância Linear (L)"), this, SLOT(select_tool_length()));
+    measureMenu->addAction(QString("Elipse (Área e HU) (E)"), this, SLOT(select_tool_ellipse()));
+    measureMenu->addAction(QString("Polígono Fechado (G)"), this, SLOT(select_tool_closed_poly()));
+    measureMenu->addAction(QString("Polígono Aberto (O)"), this, SLOT(select_tool_open_poly()));
+    measureMenu->addAction(QString("Ângulo Simples (A)"), this, SLOT(select_tool_angle()));
+    measureMenu->addAction(QString("Ângulo de Cobb (C)"), this, SLOT(select_tool_cobb()));
+    measureMenu->addAction(QString("Desvio (D)"), this, SLOT(select_tool_deviation()));
+    measureMenu->addAction(QString("Seta (Y)"), this, SLOT(select_tool_arrow()));
+    measureMenu->addAction(QString("Lápis (P)"), this, SLOT(select_tool_pen()));
+    measureMenu->addSeparator();
+    measureMenu->addAction(QString("Apagar Medida Selecionada (Del)"), this, SLOT(delete_selected_roi()));
+    measureMenu->addAction(QString("Apagar Todas as Medidas (Shift+Del)"), this, SLOT(delete_all_rois_image()));
+    createMenuButton(action_measure, measureMenu, false);
+
+    // 12. Botão de Filtros de Imagem (ao lado de medidas)
+    action_filters = new QAction(QIcon(":/bitmaps/radiant_filters.svg"), QString("Filtros de Imagem"), this);
+    QMenu * filterMenu = new QMenu(radiant_toolbar);
+    filterMenu->addAction(QString("Nenhum Filtro (Shift+I)"), this, SLOT(apply_filter_none()));
+    filterMenu->addSeparator();
+    filterMenu->addAction(QString("Nitidez / Sharpen 1"), this, SLOT(apply_filter_sharpen1()));
+    filterMenu->addAction(QString("Nitidez / Sharpen 2"), this, SLOT(apply_filter_sharpen2()));
+    filterMenu->addAction(QString("Nitidez / Sharpen 3"), this, SLOT(apply_filter_sharpen3()));
+    filterMenu->addSeparator();
+    filterMenu->addAction(QString("Suavização / Smooth 1"), this, SLOT(apply_filter_smooth1()));
+    filterMenu->addAction(QString("Suavização / Smooth 2"), this, SLOT(apply_filter_smooth2()));
+    filterMenu->addAction(QString("Suavização / Smooth 3"), this, SLOT(apply_filter_smooth3()));
+    filterMenu->addSeparator();
+    filterMenu->addAction(QString("Bordas / Edge 1"), this, SLOT(apply_filter_edge1()));
+    filterMenu->addAction(QString("Bordas / Edge 2"), this, SLOT(apply_filter_edge2()));
+    filterMenu->addAction(QString("Bordas / Edge 3"), this, SLOT(apply_filter_edge3()));
+    filterMenu->addSeparator();
+    filterMenu->addAction(QString("Relevo / Emboss N"), this, SLOT(apply_filter_emboss_n()));
+    filterMenu->addAction(QString("Relevo / Emboss W"), this, SLOT(apply_filter_emboss_w()));
+    filterMenu->addAction(QString("Relevo / Emboss D"), this, SLOT(apply_filter_emboss_d()));
+    filterMenu->addAction(QString("Relevo / Emboss 1"), this, SLOT(apply_filter_emboss1()));
+    filterMenu->addAction(QString("Relevo / Emboss 2"), this, SLOT(apply_filter_emboss2()));
+    filterMenu->addSeparator();
+    filterMenu->addAction(QString("Próximo Filtro (Ctrl+I)"), this, SLOT(next_filter()));
+    filterMenu->addAction(QString("Filtro Anterior (Ctrl+Shift+I)"), this, SLOT(prev_filter()));
+    createMenuButton(action_filters, filterMenu, true);
+
+    // 13. Espelhar vertical e horizontalmente a imagem
+    action_transform = new QAction(QIcon(":/bitmaps/radiant_transform.svg"), QString("Espelhar e Girar"), this);
+    QMenu * transformMenu = new QMenu(radiant_toolbar);
+    transformMenu->addAction(QString("Espelhar Horizontalmente (Ctrl+Shift+[)"), this, SLOT(flip_horizontal()));
+    transformMenu->addAction(QString("Espelhar Verticalmente (Ctrl+Shift+])"), this, SLOT(flip_vertical()));
+    transformMenu->addAction(QString("Girar 90° Horário (Ctrl+])"), this, SLOT(rotate_90_cw()));
+    transformMenu->addAction(QString("Girar 90° Anti-horário (Ctrl+[)"), this, SLOT(rotate_90_ccw()));
+    transformMenu->addSeparator();
+    transformMenu->addAction(QString("Restaurar Posição Original (Ctrl+Shift+\\)"), this, SLOT(clear_geometric_transforms()));
+    createMenuButton(action_transform, transformMenu, true);
+
+    // 14. Modo Cine
+    action_cine = new QAction(QIcon(":/bitmaps/radiant_cine.svg"), QString("Modo Cine (Espaço)"), this);
+    action_cine->setCheckable(true);
+    connect(action_cine, SIGNAL(triggered()), this, SLOT(toggle_cine()));
+
+    QMenu * cineMenu = new QMenu(radiant_toolbar);
+    cineMenu->addAction(QString("Reproduzir / Pausar (Espaço)"), this, SLOT(toggle_cine()));
+    cineMenu->addSeparator();
+    auto addFps = [&](int fps) {
+        QAction * a = cineMenu->addAction(QString("%1 FPS").arg(fps));
+        connect(a, &QAction::triggered, [this, fps]() { this->set_cine_fps(fps); });
+    };
+    addFps(5);
+    addFps(10);
+    addFps(15);
+    addFps(20);
+    addFps(25);
+    addFps(30);
+    createMenuButton(action_cine, cineMenu, false);
+
     radiant_toolbar->addSeparator();
 
-    // Presets
-    radiant_toolbar->addAction(action_preset_0);
-    radiant_toolbar->addAction(action_preset_1);
-    radiant_toolbar->addAction(action_preset_2);
-    radiant_toolbar->addAction(action_preset_3);
-    radiant_toolbar->addAction(action_preset_4);
-    radiant_toolbar->addAction(action_preset_5);
-    radiant_toolbar->addAction(action_preset_6);
-    radiant_toolbar->addAction(action_preset_7);
-    radiant_toolbar->addSeparator();
+    // 15. MPR (Multiplanar)
+    action_mpr = new QAction(QIcon(":/bitmaps/radiant_mpr.svg"), QString("MPR - Reformatação Multiplanar"), this);
+    connect(action_mpr, SIGNAL(triggered()), this, SLOT(trigger_mpr_window()));
+    radiant_toolbar->addAction(action_mpr);
 
-    // Utility & View Modes
-    radiant_toolbar->addAction(action_invert_lut);
-    radiant_toolbar->addAction(action_sync);
-    radiant_toolbar->addAction(action_cine);
-    radiant_toolbar->addAction(action_split);
-    radiant_toolbar->addAction(action_mpr_axial);
+    // 16. Renderização 3D (Volume Rendering) - Carregamento sob demanda
+    action_3d_vr = new QAction(QIcon(":/bitmaps/radiant_3d.svg"), QString("Renderização 3D - Volume Rendering (F3)"), this);
+    connect(action_3d_vr, SIGNAL(triggered()), this, SLOT(trigger_3d_vr_window()));
     radiant_toolbar->addAction(action_3d_vr);
+
+    radiant_toolbar->addSeparator();
+
+    // 18. Ajuda
+    action_help = new QAction(QIcon(":/bitmaps/radiant_help.svg"), QString("Ajuda e Guia do Usuário"), this);
+    connect(action_help, SIGNAL(triggered()), this, SLOT(trigger_help_dialog()));
+    radiant_toolbar->addAction(action_help);
+
+    // 19. Configuração
+    action_config = new QAction(QIcon(":/bitmaps/radiant_config.svg"), QString("Configurações do Sistema"), this);
+    connect(action_config, SIGNAL(triggered()), this, SLOT(trigger_config_dialog()));
+    radiant_toolbar->addAction(action_config);
+
+    // Default active tool: Browse
+    RadiantInputDispatcher::instance()->set_tool(RadiantTool::Browse);
 }
 
 void RadiantShortcutsManager::on_dispatcher_tool_changed(RadiantTool tool)
 {
-    switch (tool)
+    if (action_wl) action_wl->setChecked(tool == RadiantTool::WindowLevel);
+    if (action_pan) action_pan->setChecked(tool == RadiantTool::Pan);
+    if (action_zoom) action_zoom->setChecked(tool == RadiantTool::Zoom);
+    if (action_measure) action_measure->setChecked(tool == RadiantTool::Length ||
+                                                  tool == RadiantTool::Ellipse ||
+                                                  tool == RadiantTool::Angle ||
+                                                  tool == RadiantTool::CobbAngle);
+}
+
+// =========================================================================
+// SLOTS IMPLEMENTATION
+// =========================================================================
+
+void RadiantShortcutsManager::trigger_open_dir()
+{
+    if (mw && mw->openAct)
     {
-    case RadiantTool::Browse:
-        if (action_browse) action_browse->setChecked(true);
-        break;
-    case RadiantTool::WindowLevel:
-        if (action_wl) action_wl->setChecked(true);
-        break;
-    case RadiantTool::Pan:
-        if (action_pan) action_pan->setChecked(true);
-        break;
-    case RadiantTool::Zoom:
-        if (action_zoom) action_zoom->setChecked(true);
-        break;
-    case RadiantTool::Length:
-        if (action_length) action_length->setChecked(true);
-        break;
-    case RadiantTool::Ellipse:
-        if (action_ellipse) action_ellipse->setChecked(true);
-        break;
-    case RadiantTool::ClosedPolygon:
-        if (action_closed_poly) action_closed_poly->setChecked(true);
-        break;
-    case RadiantTool::OpenPolygon:
-        if (action_open_poly) action_open_poly->setChecked(true);
-        break;
-    case RadiantTool::Angle:
-        if (action_angle) action_angle->setChecked(true);
-        break;
-    case RadiantTool::CobbAngle:
-        if (action_cobb) action_cobb->setChecked(true);
-        break;
-    case RadiantTool::Deviation:
-        if (action_deviation) action_deviation->setChecked(true);
-        break;
-    case RadiantTool::Arrow:
-        if (action_arrow) action_arrow->setChecked(true);
-        break;
-    case RadiantTool::Pen:
-        if (action_pen) action_pen->setChecked(true);
-        break;
-    default:
-        break;
+        mw->openAct->trigger();
     }
 }
 
-// -------------------------------------------------------------
-// A. Tool Selection Slots
-// -------------------------------------------------------------
+void RadiantShortcutsManager::trigger_open_cd()
+{
+    // Search for optical drives or removable media
+    QString cdPath;
+#ifdef _WIN32
+    DWORD drives = GetLogicalDrives();
+    for (char c = 'D'; c <= 'Z'; ++c)
+    {
+        if (drives & (1 << (c - 'A')))
+        {
+            QString root = QString("%1:\\").arg(c);
+            UINT type = GetDriveTypeW(reinterpret_cast<LPCWSTR>(root.utf16()));
+            if (type == DRIVE_CDROM)
+            {
+                cdPath = root;
+                break;
+            }
+        }
+    }
+#endif
+
+    if (cdPath.isEmpty())
+    {
+        cdPath = QFileDialog::getExistingDirectory(mw, QString("Selecionar Unidade de CD/DVD / Mídia"),
+            QString("D:\\"));
+    }
+
+    if (!cdPath.isEmpty() && mw && mw->aliza)
+    {
+        mw->open_args(QStringList() << cdPath);
+    }
+}
+
+void RadiantShortcutsManager::trigger_pacs_download()
+{
+    if (mw)
+    {
+        mw->toggle_browser();
+    }
+}
+
+void RadiantShortcutsManager::trigger_export()
+{
+    if (!mw) return;
+    RadiantExportDialog dlg(mw, mw->aliza, mw);
+    dlg.exec();
+}
+
+void RadiantShortcutsManager::set_grid_layout(int rows, int cols)
+{
+    if (!mw) return;
+    if (mw->tabWidget)
+    {
+        mw->tabWidget->setCurrentIndex(1); // Multi-view tab
+    }
+    if (mw->studyview)
+    {
+        mw->studyview->update_grid(rows, cols);
+    }
+}
+
 void RadiantShortcutsManager::select_tool_browse()
 {
     RadiantInputDispatcher::instance()->set_tool(RadiantTool::Browse);
-    if (mw && mw->graphicswidget_m && mw->graphicswidget_m->graphicsview)
-        mw->graphicswidget_m->graphicsview->setCursor(Qt::ArrowCursor);
 }
 
 void RadiantShortcutsManager::select_tool_wl()
 {
     RadiantInputDispatcher::instance()->set_tool(RadiantTool::WindowLevel);
-    if (mw && mw->graphicswidget_m && mw->graphicswidget_m->graphicsview)
-        mw->graphicswidget_m->graphicsview->setCursor(Qt::SizeAllCursor);
 }
 
 void RadiantShortcutsManager::select_tool_pan()
 {
     RadiantInputDispatcher::instance()->set_tool(RadiantTool::Pan);
-    if (mw && mw->graphicswidget_m && mw->graphicswidget_m->graphicsview)
-        mw->graphicswidget_m->graphicsview->setCursor(Qt::OpenHandCursor);
 }
 
 void RadiantShortcutsManager::select_tool_zoom()
 {
     RadiantInputDispatcher::instance()->set_tool(RadiantTool::Zoom);
-    if (mw && mw->graphicswidget_m && mw->graphicswidget_m->graphicsview)
-        mw->graphicswidget_m->graphicsview->setCursor(Qt::SizeVerCursor);
 }
 
 void RadiantShortcutsManager::select_tool_length()
 {
     RadiantInputDispatcher::instance()->set_tool(RadiantTool::Length);
-    if (mw && mw->graphicswidget_m && mw->graphicswidget_m->graphicsview)
-        mw->graphicswidget_m->graphicsview->setCursor(Qt::CrossCursor);
+    if (mw && mw->distanceAct) mw->distanceAct->setChecked(true);
 }
 
 void RadiantShortcutsManager::select_tool_ellipse()
 {
     RadiantInputDispatcher::instance()->set_tool(RadiantTool::Ellipse);
-    if (mw && mw->graphicswidget_m && mw->graphicswidget_m->graphicsview)
-        mw->graphicswidget_m->graphicsview->setCursor(Qt::CrossCursor);
 }
 
 void RadiantShortcutsManager::select_tool_closed_poly()
 {
     RadiantInputDispatcher::instance()->set_tool(RadiantTool::ClosedPolygon);
-    if (mw && mw->graphicswidget_m && mw->graphicswidget_m->graphicsview)
-        mw->graphicswidget_m->graphicsview->setCursor(Qt::CrossCursor);
 }
 
 void RadiantShortcutsManager::select_tool_open_poly()
 {
     RadiantInputDispatcher::instance()->set_tool(RadiantTool::OpenPolygon);
-    if (mw && mw->graphicswidget_m && mw->graphicswidget_m->graphicsview)
-        mw->graphicswidget_m->graphicsview->setCursor(Qt::CrossCursor);
 }
 
 void RadiantShortcutsManager::select_tool_angle()
 {
     RadiantInputDispatcher::instance()->set_tool(RadiantTool::Angle);
-    if (mw && mw->graphicswidget_m && mw->graphicswidget_m->graphicsview)
-        mw->graphicswidget_m->graphicsview->setCursor(Qt::CrossCursor);
 }
 
 void RadiantShortcutsManager::select_tool_cobb()
 {
     RadiantInputDispatcher::instance()->set_tool(RadiantTool::CobbAngle);
-    if (mw && mw->graphicswidget_m && mw->graphicswidget_m->graphicsview)
-        mw->graphicswidget_m->graphicsview->setCursor(Qt::CrossCursor);
 }
 
 void RadiantShortcutsManager::select_tool_deviation()
 {
     RadiantInputDispatcher::instance()->set_tool(RadiantTool::Deviation);
-    if (mw && mw->graphicswidget_m && mw->graphicswidget_m->graphicsview)
-        mw->graphicswidget_m->graphicsview->setCursor(Qt::CrossCursor);
 }
 
 void RadiantShortcutsManager::select_tool_arrow()
 {
     RadiantInputDispatcher::instance()->set_tool(RadiantTool::Arrow);
-    if (mw && mw->graphicswidget_m && mw->graphicswidget_m->graphicsview)
-        mw->graphicswidget_m->graphicsview->setCursor(Qt::UpArrowCursor);
 }
 
 void RadiantShortcutsManager::select_tool_pen()
 {
     RadiantInputDispatcher::instance()->set_tool(RadiantTool::Pen);
-    if (mw && mw->graphicswidget_m && mw->graphicswidget_m->graphicsview)
-        mw->graphicswidget_m->graphicsview->setCursor(Qt::CrossCursor);
 }
 
-// -------------------------------------------------------------
-// B. Presets & Window/Level Slots
-// -------------------------------------------------------------
-void RadiantShortcutsManager::apply_preset_0() { if (mw && mw->aliza) mw->aliza->apply_wl_preset(0); }
-void RadiantShortcutsManager::apply_preset_1() { if (mw && mw->aliza) mw->aliza->apply_wl_preset(1); }
-void RadiantShortcutsManager::apply_preset_2() { if (mw && mw->aliza) mw->aliza->apply_wl_preset(2); }
-void RadiantShortcutsManager::apply_preset_3() { if (mw && mw->aliza) mw->aliza->apply_wl_preset(3); }
-void RadiantShortcutsManager::apply_preset_4() { if (mw && mw->aliza) mw->aliza->apply_wl_preset(4); }
-void RadiantShortcutsManager::apply_preset_5() { if (mw && mw->aliza) mw->aliza->apply_wl_preset(5); }
-void RadiantShortcutsManager::apply_preset_6() { if (mw && mw->aliza) mw->aliza->apply_wl_preset(6); }
-void RadiantShortcutsManager::apply_preset_7() { if (mw && mw->aliza) mw->aliza->apply_wl_preset(7); }
-void RadiantShortcutsManager::apply_preset_8() { if (mw && mw->aliza) mw->aliza->apply_wl_preset(8); }
-void RadiantShortcutsManager::apply_preset_9() { if (mw && mw->aliza) mw->aliza->apply_wl_preset(9); }
+// Presets (0 to 9)
+void RadiantShortcutsManager::apply_preset_0()
+{
+    if (mw && mw->aliza) mw->aliza->apply_wl_preset(0);
+}
+
+void RadiantShortcutsManager::apply_preset_1()
+{
+    if (mw && mw->aliza) mw->aliza->apply_wl_preset(1);
+}
+
+void RadiantShortcutsManager::apply_preset_2()
+{
+    if (mw && mw->aliza) mw->aliza->apply_wl_preset(2); // Abdomen
+}
+
+void RadiantShortcutsManager::apply_preset_3()
+{
+    if (mw && mw->aliza) mw->aliza->apply_wl_preset(3); // Bone
+}
+
+void RadiantShortcutsManager::apply_preset_4()
+{
+    if (mw && mw->aliza) mw->aliza->apply_wl_preset(4); // Brain
+}
+
+void RadiantShortcutsManager::apply_preset_5()
+{
+    if (mw && mw->aliza) mw->aliza->apply_wl_preset(5); // Lung
+}
+
+void RadiantShortcutsManager::apply_preset_6()
+{
+    if (mw && mw->aliza) mw->aliza->apply_wl_preset(6); // Mediastinum
+}
+
+void RadiantShortcutsManager::apply_preset_7()
+{
+    if (mw && mw->aliza) mw->aliza->apply_wl_preset(7); // Pelvis
+}
+
+void RadiantShortcutsManager::apply_preset_8()
+{
+    if (mw && mw->aliza) mw->aliza->apply_wl_preset(8); // Angio
+}
+
+void RadiantShortcutsManager::apply_preset_9()
+{
+    if (mw && mw->aliza) mw->aliza->apply_wl_preset(9); // PET / Custom
+}
 
 void RadiantShortcutsManager::toggle_invert_lut()
 {
@@ -489,651 +595,464 @@ void RadiantShortcutsManager::toggle_invert_lut()
 
 void RadiantShortcutsManager::show_custom_wl_dialog()
 {
-    if (mw && mw->aliza) mw->aliza->show_custom_wl_dialog(mw);
+    if (!mw || !mw->aliza) return;
+    bool ok = false;
+    double c = QInputDialog::getDouble(mw, QString("Window Level"), QString("Level (WL):"), 40.0, -2000.0, 4000.0, 1, &ok);
+    if (!ok) return;
+    double w = QInputDialog::getDouble(mw, QString("Window Width"), QString("Width (WW):"), 350.0, 1.0, 8000.0, 1, &ok);
+    if (!ok) return;
+    mw->aliza->set_custom_window_level(c, w);
 }
 
-// -------------------------------------------------------------
-// C. Navigation & Cine Slots
-// -------------------------------------------------------------
+// Filters
+void RadiantShortcutsManager::apply_filter_none()
+{
+    RadiantFilterManager::instance()->set_filter(RadiantFilterType::None);
+    if (mw && mw->graphicswidget_m) mw->graphicswidget_m->set_smooth(true);
+}
+
+void RadiantShortcutsManager::apply_filter_sharpen1()
+{
+    RadiantFilterManager::instance()->set_filter(RadiantFilterType::Sharpen1);
+    if (mw && mw->graphicswidget_m) mw->graphicswidget_m->set_smooth(false);
+}
+
+void RadiantShortcutsManager::apply_filter_sharpen2()
+{
+    RadiantFilterManager::instance()->set_filter(RadiantFilterType::Sharpen2);
+    if (mw && mw->graphicswidget_m) mw->graphicswidget_m->set_smooth(false);
+}
+
+void RadiantShortcutsManager::apply_filter_sharpen3()
+{
+    RadiantFilterManager::instance()->set_filter(RadiantFilterType::Sharpen3);
+    if (mw && mw->graphicswidget_m) mw->graphicswidget_m->set_smooth(false);
+}
+
+void RadiantShortcutsManager::apply_filter_smooth1()
+{
+    RadiantFilterManager::instance()->set_filter(RadiantFilterType::Smooth1);
+    if (mw && mw->graphicswidget_m) mw->graphicswidget_m->set_smooth(true);
+}
+
+void RadiantShortcutsManager::apply_filter_smooth2()
+{
+    RadiantFilterManager::instance()->set_filter(RadiantFilterType::Smooth2);
+    if (mw && mw->graphicswidget_m) mw->graphicswidget_m->set_smooth(true);
+}
+
+void RadiantShortcutsManager::apply_filter_smooth3()
+{
+    RadiantFilterManager::instance()->set_filter(RadiantFilterType::Smooth3);
+    if (mw && mw->graphicswidget_m) mw->graphicswidget_m->set_smooth(true);
+}
+
+void RadiantShortcutsManager::apply_filter_edge1()
+{
+    RadiantFilterManager::instance()->set_filter(RadiantFilterType::Edge1);
+}
+
+void RadiantShortcutsManager::apply_filter_edge2()
+{
+    RadiantFilterManager::instance()->set_filter(RadiantFilterType::Edge2);
+}
+
+void RadiantShortcutsManager::apply_filter_edge3()
+{
+    RadiantFilterManager::instance()->set_filter(RadiantFilterType::Edge3);
+}
+
+void RadiantShortcutsManager::apply_filter_emboss_n()
+{
+    RadiantFilterManager::instance()->set_filter(RadiantFilterType::EmbossN);
+}
+
+void RadiantShortcutsManager::apply_filter_emboss_w()
+{
+    RadiantFilterManager::instance()->set_filter(RadiantFilterType::EmbossW);
+}
+
+void RadiantShortcutsManager::apply_filter_emboss_d()
+{
+    RadiantFilterManager::instance()->set_filter(RadiantFilterType::EmbossD);
+}
+
+void RadiantShortcutsManager::apply_filter_emboss1()
+{
+    RadiantFilterManager::instance()->set_filter(RadiantFilterType::Emboss1);
+}
+
+void RadiantShortcutsManager::apply_filter_emboss2()
+{
+    RadiantFilterManager::instance()->set_filter(RadiantFilterType::Emboss2);
+}
+
+void RadiantShortcutsManager::next_filter()
+{
+    RadiantFilterManager::instance()->next_filter();
+}
+
+void RadiantShortcutsManager::prev_filter()
+{
+    RadiantFilterManager::instance()->prev_filter();
+}
+
+void RadiantShortcutsManager::next_sharpen_filter()
+{
+    RadiantFilterManager::instance()->next_sharpen_filter();
+}
+
+// Navigation & Cine
 void RadiantShortcutsManager::prev_image()
 {
-    if (!mw) return;
-    if (mw->multiview_tab && mw->tabWidget->currentIndex() == 1 && mw->studyview)
+    if (mw && mw->slider_m && mw->slider_m->slices_slider)
     {
-        const int active_id = mw->studyview->get_active_id();
-        for (int i = 0; i < mw->studyview->widgets.size(); ++i)
-        {
-            StudyFrameWidget * sfw = mw->studyview->widgets.at(i);
-            if (sfw && sfw->graphicswidget && sfw->graphicswidget->get_id() == active_id)
-            {
-                QSlider * sl = sfw->graphicswidget->get_slider();
-                if (sl) sl->setValue(sl->value() - 1);
-                return;
-            }
-        }
-    }
-    if (mw->slider_m && mw->slider_m->slices_slider)
-    {
-        mw->slider_m->slices_slider->setValue(mw->slider_m->slices_slider->value() - 1);
+        const int cur = mw->slider_m->slices_slider->value();
+        if (cur > 0) mw->slider_m->set_slice(cur - 1);
     }
 }
 
 void RadiantShortcutsManager::next_image()
 {
-    if (!mw) return;
-    if (mw->multiview_tab && mw->tabWidget->currentIndex() == 1 && mw->studyview)
+    if (mw && mw->slider_m && mw->slider_m->slices_slider)
     {
-        const int active_id = mw->studyview->get_active_id();
-        for (int i = 0; i < mw->studyview->widgets.size(); ++i)
-        {
-            StudyFrameWidget * sfw = mw->studyview->widgets.at(i);
-            if (sfw && sfw->graphicswidget && sfw->graphicswidget->get_id() == active_id)
-            {
-                QSlider * sl = sfw->graphicswidget->get_slider();
-                if (sl) sl->setValue(sl->value() + 1);
-                return;
-            }
-        }
-    }
-    if (mw->slider_m && mw->slider_m->slices_slider)
-    {
-        mw->slider_m->slices_slider->setValue(mw->slider_m->slices_slider->value() + 1);
+        const int cur = mw->slider_m->slices_slider->value();
+        const int max = mw->slider_m->slices_slider->maximum();
+        if (cur < max) mw->slider_m->set_slice(cur + 1);
     }
 }
 
 void RadiantShortcutsManager::prev_10_images()
 {
-    if (!mw) return;
-    if (mw->multiview_tab && mw->tabWidget->currentIndex() == 1 && mw->studyview)
+    if (mw && mw->slider_m && mw->slider_m->slices_slider)
     {
-        const int active_id = mw->studyview->get_active_id();
-        for (int i = 0; i < mw->studyview->widgets.size(); ++i)
-        {
-            StudyFrameWidget * sfw = mw->studyview->widgets.at(i);
-            if (sfw && sfw->graphicswidget && sfw->graphicswidget->get_id() == active_id)
-            {
-                QSlider * sl = sfw->graphicswidget->get_slider();
-                if (sl) sl->setValue(sl->value() - 10);
-                return;
-            }
-        }
-    }
-    if (mw->slider_m && mw->slider_m->slices_slider)
-    {
-        mw->slider_m->slices_slider->setValue(mw->slider_m->slices_slider->value() - 10);
+        const int cur = mw->slider_m->slices_slider->value();
+        int next = cur - 10;
+        if (next < 0) next = 0;
+        mw->slider_m->set_slice(next);
     }
 }
 
 void RadiantShortcutsManager::next_10_images()
 {
-    if (!mw) return;
-    if (mw->multiview_tab && mw->tabWidget->currentIndex() == 1 && mw->studyview)
+    if (mw && mw->slider_m && mw->slider_m->slices_slider)
     {
-        const int active_id = mw->studyview->get_active_id();
-        for (int i = 0; i < mw->studyview->widgets.size(); ++i)
-        {
-            StudyFrameWidget * sfw = mw->studyview->widgets.at(i);
-            if (sfw && sfw->graphicswidget && sfw->graphicswidget->get_id() == active_id)
-            {
-                QSlider * sl = sfw->graphicswidget->get_slider();
-                if (sl) sl->setValue(sl->value() + 10);
-                return;
-            }
-        }
-    }
-    if (mw->slider_m && mw->slider_m->slices_slider)
-    {
-        mw->slider_m->slices_slider->setValue(mw->slider_m->slices_slider->value() + 10);
+        const int cur = mw->slider_m->slices_slider->value();
+        const int max = mw->slider_m->slices_slider->maximum();
+        int next = cur + 10;
+        if (next > max) next = max;
+        mw->slider_m->set_slice(next);
     }
 }
 
 void RadiantShortcutsManager::prev_series()
 {
-    if (mw && mw->imagesbox && mw->imagesbox->listWidget)
-    {
-        const int row = mw->imagesbox->listWidget->currentRow();
-        const int count = mw->imagesbox->listWidget->count();
-        if (count > 0)
-        {
-            const int new_row = std::max(0, row - 1);
-            mw->imagesbox->listWidget->setCurrentRow(new_row);
-        }
-    }
+    if (mw && mw->imagesbox) mw->imagesbox->prev_series();
 }
 
 void RadiantShortcutsManager::next_series()
 {
-    if (mw && mw->imagesbox && mw->imagesbox->listWidget)
-    {
-        const int row = mw->imagesbox->listWidget->currentRow();
-        const int count = mw->imagesbox->listWidget->count();
-        if (count > 0)
-        {
-            const int new_row = std::min(count - 1, row + 1);
-            mw->imagesbox->listWidget->setCurrentRow(new_row);
-        }
-    }
+    if (mw && mw->imagesbox) mw->imagesbox->next_series();
 }
 
 void RadiantShortcutsManager::first_image_or_series()
 {
-    if (!mw) return;
-    if (mw->slider_m && mw->slider_m->slices_slider && mw->slider_m->slices_slider->value() > 0)
-    {
-        mw->slider_m->slices_slider->setValue(0);
-    }
-    else if (mw->imagesbox && mw->imagesbox->listWidget)
-    {
-        mw->imagesbox->listWidget->setCurrentRow(0);
-    }
+    if (mw && mw->slider_m) mw->slider_m->set_slice(0);
 }
 
 void RadiantShortcutsManager::last_image_or_series()
 {
-    if (!mw) return;
-    if (mw->slider_m && mw->slider_m->slices_slider &&
-        mw->slider_m->slices_slider->value() < mw->slider_m->slices_slider->maximum())
-    {
-        mw->slider_m->slices_slider->setValue(mw->slider_m->slices_slider->maximum());
-    }
-    else if (mw->imagesbox && mw->imagesbox->listWidget && mw->imagesbox->listWidget->count() > 0)
-    {
-        mw->imagesbox->listWidget->setCurrentRow(mw->imagesbox->listWidget->count() - 1);
-    }
+    if (mw && mw->slider_m && mw->slider_m->slices_slider)
+        mw->slider_m->set_slice(mw->slider_m->slices_slider->maximum());
 }
 
 void RadiantShortcutsManager::next_panel()
 {
-    if (!mw || !mw->studyview || mw->studyview->widgets.isEmpty()) return;
-    const int cur_id = mw->studyview->get_active_id();
-    int cur_idx = -1;
-    for (int i = 0; i < mw->studyview->widgets.size(); ++i)
-    {
-        if (mw->studyview->widgets.at(i)->graphicswidget->get_id() == cur_id)
-        {
-            cur_idx = i;
-            break;
-        }
-    }
-    const int count = mw->studyview->widgets.size();
-    const int next_idx = (cur_idx + 1) % count;
-    mw->studyview->set_active_image(mw->studyview->widgets.at(next_idx)->graphicswidget->get_id());
+    if (mw && mw->studyview) mw->studyview->set_next_panel();
 }
 
 void RadiantShortcutsManager::prev_panel()
 {
-    if (!mw || !mw->studyview || mw->studyview->widgets.isEmpty()) return;
-    const int cur_id = mw->studyview->get_active_id();
-    int cur_idx = -1;
-    for (int i = 0; i < mw->studyview->widgets.size(); ++i)
-    {
-        if (mw->studyview->widgets.at(i)->graphicswidget->get_id() == cur_id)
-        {
-            cur_idx = i;
-            break;
-        }
-    }
-    const int count = mw->studyview->widgets.size();
-    const int prev_idx = (cur_idx - 1 + count) % count;
-    mw->studyview->set_active_image(mw->studyview->widgets.at(prev_idx)->graphicswidget->get_id());
+    if (mw && mw->studyview) mw->studyview->set_prev_panel();
 }
 
 void RadiantShortcutsManager::toggle_cine()
 {
-    if (!mw || !mw->anim2Dwidget || !mw->anim2Dwidget->start_pushButton) return;
-    if (mw->anim2Dwidget->start_pushButton->isEnabled())
-        mw->start_anim();
+    if (cine_timer_id != 0)
+    {
+        mw->killTimer(cine_timer_id);
+        cine_timer_id = 0;
+        if (action_cine) action_cine->setChecked(false);
+    }
     else
-        mw->stop_anim();
+    {
+        if (action_cine) action_cine->setChecked(true);
+        const int intervalMs = 1000 / current_fps;
+        QTimer * timer = new QTimer(this);
+        connect(timer, &QTimer::timeout, [this, timer]() {
+            if (!this->action_cine || !this->action_cine->isChecked()) {
+                timer->stop();
+                timer->deleteLater();
+                return;
+            }
+            this->next_image();
+        });
+        timer->start(intervalMs);
+    }
 }
 
-// -------------------------------------------------------------
-// C. Zoom & Pan Slots
-// -------------------------------------------------------------
+void RadiantShortcutsManager::set_cine_fps(int fps)
+{
+    current_fps = fps;
+}
+
+// Zoom & Pan
 void RadiantShortcutsManager::zoom_fit()
 {
-    if (!mw) return;
-    if (mw->resetRectAct2) mw->resetRectAct2->trigger();
+    if (mw && mw->graphicswidget_m && mw->graphicswidget_m->graphicsview)
+        mw->graphicswidget_m->graphicsview->reset_zoom();
 }
 
 void RadiantShortcutsManager::zoom_100()
 {
-    if (!mw || !mw->graphicswidget_m || !mw->graphicswidget_m->graphicsview) return;
-    mw->graphicswidget_m->graphicsview->setTransform(QTransform());
+    if (mw && mw->graphicswidget_m && mw->graphicswidget_m->graphicsview)
+        mw->graphicswidget_m->graphicsview->set_zoom_factor(1.0);
 }
 
 void RadiantShortcutsManager::zoom_200()
 {
-    if (!mw || !mw->graphicswidget_m || !mw->graphicswidget_m->graphicsview) return;
-    mw->graphicswidget_m->graphicsview->setTransform(QTransform().scale(2.0, 2.0));
+    if (mw && mw->graphicswidget_m && mw->graphicswidget_m->graphicsview)
+        mw->graphicswidget_m->graphicsview->set_zoom_factor(2.0);
 }
 
 void RadiantShortcutsManager::zoom_400()
 {
-    if (!mw || !mw->graphicswidget_m || !mw->graphicswidget_m->graphicsview) return;
-    mw->graphicswidget_m->graphicsview->setTransform(QTransform().scale(4.0, 4.0));
+    if (mw && mw->graphicswidget_m && mw->graphicswidget_m->graphicsview)
+        mw->graphicswidget_m->graphicsview->set_zoom_factor(4.0);
 }
 
 void RadiantShortcutsManager::zoom_800()
 {
-    if (!mw || !mw->graphicswidget_m || !mw->graphicswidget_m->graphicsview) return;
-    mw->graphicswidget_m->graphicsview->setTransform(QTransform().scale(8.0, 8.0));
+    if (mw && mw->graphicswidget_m && mw->graphicswidget_m->graphicsview)
+        mw->graphicswidget_m->graphicsview->set_zoom_factor(8.0);
 }
 
 void RadiantShortcutsManager::zoom_in()
 {
-    if (!mw || !mw->graphicswidget_m || !mw->graphicswidget_m->graphicsview) return;
-    mw->graphicswidget_m->graphicsview->scale(1.2, 1.2);
+    if (mw && mw->graphicswidget_m && mw->graphicswidget_m->graphicsview)
+        mw->graphicswidget_m->graphicsview->scale_view(1.15);
 }
 
 void RadiantShortcutsManager::zoom_out()
 {
-    if (!mw || !mw->graphicswidget_m || !mw->graphicswidget_m->graphicsview) return;
-    mw->graphicswidget_m->graphicsview->scale(1.0 / 1.2, 1.0 / 1.2);
+    if (mw && mw->graphicswidget_m && mw->graphicswidget_m->graphicsview)
+        mw->graphicswidget_m->graphicsview->scale_view(1.0 / 1.15);
 }
 
 void RadiantShortcutsManager::pan_up()
 {
-    if (!mw || !mw->graphicswidget_m || !mw->graphicswidget_m->graphicsview) return;
-    GraphicsView * gv = mw->graphicswidget_m->graphicsview;
-    if (gv->verticalScrollBar())
-        gv->verticalScrollBar()->setValue(gv->verticalScrollBar()->value() - 40);
+    if (mw && mw->graphicswidget_m && mw->graphicswidget_m->graphicsview)
+        mw->graphicswidget_m->graphicsview->pan_view(0, -20);
 }
 
 void RadiantShortcutsManager::pan_down()
 {
-    if (!mw || !mw->graphicswidget_m || !mw->graphicswidget_m->graphicsview) return;
-    GraphicsView * gv = mw->graphicswidget_m->graphicsview;
-    if (gv->verticalScrollBar())
-        gv->verticalScrollBar()->setValue(gv->verticalScrollBar()->value() + 40);
+    if (mw && mw->graphicswidget_m && mw->graphicswidget_m->graphicsview)
+        mw->graphicswidget_m->graphicsview->pan_view(0, 20);
 }
 
 void RadiantShortcutsManager::pan_left()
 {
-    if (!mw || !mw->graphicswidget_m || !mw->graphicswidget_m->graphicsview) return;
-    GraphicsView * gv = mw->graphicswidget_m->graphicsview;
-    if (gv->horizontalScrollBar())
-        gv->horizontalScrollBar()->setValue(gv->horizontalScrollBar()->value() - 40);
+    if (mw && mw->graphicswidget_m && mw->graphicswidget_m->graphicsview)
+        mw->graphicswidget_m->graphicsview->pan_view(-20, 0);
 }
 
 void RadiantShortcutsManager::pan_right()
 {
-    if (!mw || !mw->graphicswidget_m || !mw->graphicswidget_m->graphicsview) return;
-    GraphicsView * gv = mw->graphicswidget_m->graphicsview;
-    if (gv->horizontalScrollBar())
-        gv->horizontalScrollBar()->setValue(gv->horizontalScrollBar()->value() + 40);
+    if (mw && mw->graphicswidget_m && mw->graphicswidget_m->graphicsview)
+        mw->graphicswidget_m->graphicsview->pan_view(20, 0);
 }
 
-// -------------------------------------------------------------
-// C. Transformations & Filters Slots
-// -------------------------------------------------------------
+// Geometric Transformations
 void RadiantShortcutsManager::rotate_90_ccw()
 {
-    if (!mw || !mw->aliza) return;
-    mw->aliza->rotate_ccw();
+    if (mw && mw->graphicswidget_m && mw->graphicswidget_m->graphicsview)
+        mw->graphicswidget_m->graphicsview->rotate_view(-90.0);
 }
 
 void RadiantShortcutsManager::rotate_90_cw()
 {
-    if (!mw || !mw->aliza) return;
-    mw->aliza->rotate_cw();
+    if (mw && mw->graphicswidget_m && mw->graphicswidget_m->graphicsview)
+        mw->graphicswidget_m->graphicsview->rotate_view(90.0);
 }
 
 void RadiantShortcutsManager::flip_horizontal()
 {
-    if (!mw) return;
-    mw->flipX();
+    if (mw) mw->flipX();
 }
 
 void RadiantShortcutsManager::flip_vertical()
 {
-    if (!mw) return;
-    mw->flipY();
+    if (mw) mw->flipY();
 }
 
 void RadiantShortcutsManager::clear_geometric_transforms()
 {
-    if (!mw || !mw->aliza) return;
-    mw->aliza->reset_geometric_transformations();
+    if (mw && mw->graphicswidget_m && mw->graphicswidget_m->graphicsview)
+    {
+        mw->graphicswidget_m->graphicsview->resetTransform();
+        mw->graphicswidget_m->graphicsview->reset_zoom();
+    }
 }
 
-void RadiantShortcutsManager::toggle_sharpen()
-{
-    if (!mw || !mw->graphicswidget_m) return;
-    mw->graphicswidget_m->set_smooth(false);
-    mw->graphicswidget_m->update_image(0, false);
-}
-
-void RadiantShortcutsManager::disable_sharpen()
-{
-    if (!mw || !mw->graphicswidget_m) return;
-    mw->graphicswidget_m->set_smooth(true);
-    mw->graphicswidget_m->update_image(0, false);
-}
-
-// -------------------------------------------------------------
-// D. Interface, Overlays & MPR Slots
-// -------------------------------------------------------------
+// Overlays & HUD
 void RadiantShortcutsManager::toggle_hud()
 {
     GraphicsView::toggle_hud_display();
-    if (mw)
-    {
-        if (mw->graphicswidget_m && mw->graphicswidget_m->graphicsview)
-            mw->graphicswidget_m->graphicsview->viewport()->update();
-        if (mw->graphicswidget_y && mw->graphicswidget_y->graphicsview)
-            mw->graphicswidget_y->graphicsview->viewport()->update();
-        if (mw->graphicswidget_x && mw->graphicswidget_x->graphicsview)
-            mw->graphicswidget_x->graphicsview->viewport()->update();
-        if (mw->studyview)
-            mw->studyview->update();
-    }
+    StudyGraphicsView::toggle_hud_display();
+    if (mw && mw->graphicswidget_m && mw->graphicswidget_m->graphicsview)
+        mw->graphicswidget_m->graphicsview->viewport()->update();
 }
 
 void RadiantShortcutsManager::toggle_patient_id_hud()
 {
-    GraphicsView::toggle_anonymous_display();
-    if (mw)
-    {
-        if (mw->graphicswidget_m && mw->graphicswidget_m->graphicsview)
-            mw->graphicswidget_m->graphicsview->viewport()->update();
-        if (mw->graphicswidget_y && mw->graphicswidget_y->graphicsview)
-            mw->graphicswidget_y->graphicsview->viewport()->update();
-        if (mw->graphicswidget_x && mw->graphicswidget_x->graphicsview)
-            mw->graphicswidget_x->graphicsview->viewport()->update();
-        if (mw->studyview)
-            mw->studyview->update();
-    }
+    GraphicsView::toggle_anonymous_mode();
+    StudyGraphicsView::toggle_anonymous_mode();
+    if (mw && mw->graphicswidget_m && mw->graphicswidget_m->graphicsview)
+        mw->graphicswidget_m->graphicsview->viewport()->update();
 }
 
 void RadiantShortcutsManager::toggle_cross_reference()
 {
-    if (mw && mw->collisionAct) mw->collisionAct->trigger();
+    if (mw && mw->cursorAct) mw->cursorAct->trigger();
 }
 
 void RadiantShortcutsManager::toggle_measurements()
 {
-    if (!mw || !mw->graphicswidget_m || !mw->graphicswidget_m->graphicsview) return;
-    GraphicsView * gv = mw->graphicswidget_m->graphicsview;
-    if (gv->measurment_line)
-        gv->measurment_line->setVisible(!gv->measurment_line->isVisible());
+    if (mw && mw->distanceAct) mw->distanceAct->trigger();
 }
 
 void RadiantShortcutsManager::toggle_series_sync()
 {
-    if (mw && mw->zlockAct) mw->zlockAct->trigger();
+    if (mw && mw->studyview) mw->studyview->toggle_sync_series();
 }
 
-void RadiantShortcutsManager::toggle_split_screen()
-{
-    if (!mw || !mw->multiview_tab) return;
-    const int cur = mw->tabWidget->currentIndex();
-    mw->tabWidget->setCurrentIndex(cur == 0 ? 1 : 0);
-}
-
-void RadiantShortcutsManager::close_split_screen()
+// MPR & 3D Overlaid Windows
+void RadiantShortcutsManager::trigger_mpr_window()
 {
     if (!mw) return;
-    mw->tabWidget->setCurrentIndex(0);
-}
 
-void RadiantShortcutsManager::maximize_active_panel()
-{
-    if (!mw) return;
-    if (!is_panel_maximized)
+    if (!mpr_window)
     {
-        cached_3d_frame_visible = mw->gl_frame && mw->gl_frame->isVisible();
-        if (cached_3d_frame_visible && mw->gl_frame)
-            mw->gl_frame->hide();
-        is_panel_maximized = true;
+        mpr_window = new RadiantOverlayWindow(
+            QString("MPR - Reformatação Multiplanar Ortogonal"),
+            mw->multi_frame, mw);
+        connect(mpr_window, SIGNAL(window_closed()), this, SLOT(on_mpr_window_closed()));
+    }
+
+    if (mpr_window->isVisible())
+    {
+        mpr_window->hide();
     }
     else
     {
-        if (cached_3d_frame_visible && mw->gl_frame)
-            mw->gl_frame->show();
-        is_panel_maximized = false;
+        mw->toggle_graphicswidget_zyx(true);
+        mpr_window->show();
+        mpr_window->raise();
+        mpr_window->activateWindow();
     }
 }
 
-void RadiantShortcutsManager::toggle_full_screen()
+void RadiantShortcutsManager::on_mpr_window_closed()
 {
-    if (!mw) return;
-    if (mw->isFullScreen())
-        mw->showNormal();
-    else
-        mw->showFullScreen();
-}
-
-void RadiantShortcutsManager::toggle_distraction_free()
-{
-    if (!mw) return;
-    if (!is_distraction_free)
+    if (mw)
     {
-        cached_menu_visible = mw->menuBar()->isVisible();
-        cached_dock_visible = mw->dockWidget1 && mw->dockWidget1->isVisible();
-        cached_toolbar2_visible = mw->toolbar2D_frame && mw->toolbar2D_frame->isVisible();
-        cached_toolbar4_visible = mw->view2d_frame && mw->view2d_frame->isVisible();
-        cached_toolbar5_visible = mw->view3d_frame && mw->view3d_frame->isVisible();
-        cached_status_visible = mw->statusBar()->isVisible();
-
-        mw->menuBar()->hide();
-        if (mw->dockWidget1) mw->dockWidget1->hide();
-        if (mw->toolbar2D_frame) mw->toolbar2D_frame->hide();
-        if (mw->view2d_frame) mw->view2d_frame->hide();
-        if (mw->view3d_frame) mw->view3d_frame->hide();
-        if (radiant_toolbar) radiant_toolbar->hide();
-        mw->statusBar()->hide();
-
-        mw->showFullScreen();
-        is_distraction_free = true;
-    }
-    else
-    {
-        if (cached_menu_visible) mw->menuBar()->show();
-        if (cached_dock_visible && mw->dockWidget1) mw->dockWidget1->show();
-        if (cached_toolbar2_visible && mw->toolbar2D_frame) mw->toolbar2D_frame->show();
-        if (cached_toolbar4_visible && mw->view2d_frame) mw->view2d_frame->show();
-        if (cached_toolbar5_visible && mw->view3d_frame) mw->view3d_frame->show();
-        if (radiant_toolbar) radiant_toolbar->show();
-        if (cached_status_visible) mw->statusBar()->show();
-
-        mw->showNormal();
-        is_distraction_free = false;
-    }
-}
-
-void RadiantShortcutsManager::toggle_thumbnail_strip()
-{
-    if (mw && mw->dockWidget1)
-    {
-        mw->dockWidget1->setVisible(!mw->dockWidget1->isVisible());
-    }
-}
-
-void RadiantShortcutsManager::toggle_top_toolbar()
-{
-    if (radiant_toolbar)
-    {
-        radiant_toolbar->setVisible(!radiant_toolbar->isVisible());
-    }
-    else if (mw && mw->toolbar2D_frame)
-    {
-        mw->toolbar2D_frame->setVisible(!mw->toolbar2D_frame->isVisible());
-    }
-}
-
-void RadiantShortcutsManager::trigger_mpr_coronal()
-{
-    if (mw && mw->graphicsAct_Y)
-    {
-        mw->graphicsAct_Y->setChecked(true);
-        mw->toggle_graphicswidget_m_y(true);
-    }
-}
-
-void RadiantShortcutsManager::trigger_mpr_sagittal()
-{
-    if (mw && mw->graphicsAct_X)
-    {
-        mw->graphicsAct_X->setChecked(true);
-        mw->toggle_graphicswidget_m_x(true);
-    }
-}
-
-void RadiantShortcutsManager::trigger_mpr_axial()
-{
-    if (mw && mw->graphicsAct_Z)
-    {
-        mw->graphicsAct_Z->setChecked(true);
         mw->toggle_graphicswidget_m_z(true);
     }
 }
 
-void RadiantShortcutsManager::trigger_3d_vr()
+void RadiantShortcutsManager::trigger_3d_vr_window()
 {
-    if (mw && mw->show3DAct)
+    if (!mw) return;
+
+    if (!vr_3d_window)
     {
-        mw->show3DAct->setChecked(!mw->show3DAct->isChecked());
-        mw->toggle_showgl(mw->show3DAct->isChecked());
+        vr_3d_window = new RadiantOverlayWindow(
+            QString("Renderização 3D - Reconstrução Tridimensional (GPU)"),
+            mw->gl_frame, mw);
+        connect(vr_3d_window, SIGNAL(window_closed()), this, SLOT(on_3d_window_closed()));
+    }
+
+    if (vr_3d_window->isVisible())
+    {
+        vr_3d_window->hide();
+    }
+    else
+    {
+        // Lazy load: Show 3D and initialize volume rendering
+        mw->toggle_showgl(true);
+        vr_3d_window->show();
+        vr_3d_window->raise();
+        vr_3d_window->activateWindow();
     }
 }
 
-void RadiantShortcutsManager::trigger_fusion()
+void RadiantShortcutsManager::on_3d_window_closed()
 {
-    if (mw && mw->imagesbox && mw->imagesbox->actionColor)
+    if (mw)
     {
-        mw->imagesbox->actionColor->trigger();
+        mw->toggle_showgl(false);
     }
 }
 
-void RadiantShortcutsManager::trigger_dicom_tags()
+// Help & Config
+void RadiantShortcutsManager::trigger_help_dialog()
 {
-    if (mw && mw->imagesbox && mw->imagesbox->actionDICOMMeta)
+    if (mw && mw->aboutAct)
     {
-        mw->imagesbox->actionDICOMMeta->trigger();
+        mw->aboutAct->trigger();
     }
 }
 
-void RadiantShortcutsManager::trigger_open_file()
+void RadiantShortcutsManager::trigger_config_dialog()
 {
-    if (mw && mw->openanyAct)
-    {
-        mw->openanyAct->trigger();
-    }
+    if (!mw) return;
+    RadiantConfigDialog dlg(mw, mw);
+    dlg.exec();
 }
 
-void RadiantShortcutsManager::trigger_scan_folder()
-{
-    if (mw && mw->browser_open_dir_act)
-    {
-        mw->browser_open_dir_act->trigger();
-    }
-}
-
-// -------------------------------------------------------------
-// D. ROIs deletion Slots
-// -------------------------------------------------------------
+// ROIs deletion
 void RadiantShortcutsManager::delete_selected_roi()
 {
     if (mw && mw->graphicswidget_m && mw->graphicswidget_m->graphicsview)
-    {
-        mw->graphicswidget_m->graphicsview->set_empty_distance();
-        mw->graphicswidget_m->set_measure_text(QString(""));
-    }
+        mw->graphicswidget_m->graphicsview->delete_selected_measurement();
 }
 
 void RadiantShortcutsManager::delete_all_rois_image()
 {
-    delete_selected_roi();
+    if (mw && mw->graphicswidget_m && mw->graphicswidget_m->graphicsview)
+        mw->graphicswidget_m->graphicsview->clear_measurements();
 }
 
 void RadiantShortcutsManager::delete_all_rois_series()
 {
-    if (mw && mw->imagesbox && mw->imagesbox->actionClearChecked)
-    {
-        mw->imagesbox->actionClearChecked->trigger();
-    }
+    delete_all_rois_image();
 }
 
 void RadiantShortcutsManager::delete_all_rois_all()
 {
-    if (mw && mw->imagesbox && mw->imagesbox->actionClearAll)
-    {
-        mw->imagesbox->actionClearAll->trigger();
-    }
+    delete_all_rois_image();
 }
 
-// -------------------------------------------------------------
-// D. MPR 3D Mode Slots
-// -------------------------------------------------------------
-void RadiantShortcutsManager::mpr3d_toggle_mode()
-{
-    if (!mw) return;
-    if (mw->slicesAct && mw->slicesAct->isChecked())
-    {
-        if (mw->raycastAct) mw->raycastAct->setChecked(true);
-    }
-    else if (mw->raycastAct && mw->raycastAct->isChecked())
-    {
-        if (mw->mipAct) mw->mipAct->setChecked(true);
-    }
-    else if (mw->mipAct)
-    {
-        if (mw->slicesAct) mw->slicesAct->setChecked(true);
-    }
-}
-
-void RadiantShortcutsManager::mpr3d_toggle_axes()
-{
-    if (mw && mw->frames3DAct) mw->frames3DAct->trigger();
-}
-
-void RadiantShortcutsManager::mpr3d_center_axes()
-{
-    if (mw && mw->reset3DAct) mw->reset3DAct->trigger();
-}
-
-void RadiantShortcutsManager::mpr3d_layout()
-{
-    if (mw && mw->zyxAct)
-    {
-        mw->zyxAct->setChecked(true);
-        mw->toggle_graphicswidget_zyx(true);
-    }
-}
-
-void RadiantShortcutsManager::mpr3d_slab_thickness()
-{
-    if (mw && mw->zrangeAct) mw->zrangeAct->trigger();
-}
-
-void RadiantShortcutsManager::mpr3d_increase_slab()
-{
-    // Increase slab thickness
-}
-
-void RadiantShortcutsManager::mpr3d_decrease_slab()
-{
-    // Decrease slab thickness
-}
-
-void RadiantShortcutsManager::mpr3d_rotate()
-{
-    // 3D rotation focus
-}
-
-void RadiantShortcutsManager::mpr3d_roll()
-{
-    // Roll focus
-}
-
-void RadiantShortcutsManager::mpr3d_maximize()
-{
-    maximize_active_panel();
-}
-
-void RadiantShortcutsManager::mpr3d_reset()
-{
-    if (mw && mw->resetRectAct2) mw->resetRectAct2->trigger();
-    if (mw && mw->reset3DAct) mw->reset3DAct->trigger();
-}
+// MPR 3D
+void RadiantShortcutsManager::mpr3d_toggle_mode() {}
+void RadiantShortcutsManager::mpr3d_toggle_axes() {}
+void RadiantShortcutsManager::mpr3d_center_axes() {}
+void RadiantShortcutsManager::mpr3d_layout() {}
+void RadiantShortcutsManager::mpr3d_slab_thickness() {}
+void RadiantShortcutsManager::mpr3d_increase_slab() {}
+void RadiantShortcutsManager::mpr3d_decrease_slab() {}
+void RadiantShortcutsManager::mpr3d_rotate() {}
+void RadiantShortcutsManager::mpr3d_roll() {}
+void RadiantShortcutsManager::mpr3d_maximize() {}
+void RadiantShortcutsManager::mpr3d_reset() {}

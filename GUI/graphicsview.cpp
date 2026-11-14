@@ -1,3 +1,4 @@
+#include "radiantconfigdialog.h"
 #include "graphicsview.h"
 #include "graphicswidget.h"
 #include "aliza.h"
@@ -367,28 +368,30 @@ void GraphicsView::drawForeground(QPainter * painter, const QRectF & rect)
 		drawShadow(vr.right() - margin - textWidth, y, text);
 	};
 
+	const RadiantHudConfig & cfg = RadiantConfigDialog::get_hud_config();
+
 	// 1. TOP-LEFT: Patient Name / ID (ocultável via Shift+F12), Data, Série
 	int tl_y = vr.top() + margin + lineHeight;
 	QString patText = s_anonymous_mode ? QString("[ANÔNIMO]") : (iv->pat_name.isEmpty() ? iv->pat_id : iv->pat_name);
-	if (!patText.isEmpty())
+	if (cfg.show_patient_name && !patText.isEmpty())
 	{
 		drawShadow(vr.left() + margin, tl_y, patText);
 		tl_y += lineHeight;
 	}
 
-	if (!s_anonymous_mode && !iv->pat_id.isEmpty())
+	if (cfg.show_patient_id && !s_anonymous_mode && !iv->pat_id.isEmpty())
 	{
 		drawShadow(vr.left() + margin, tl_y, QString("ID: ") + iv->pat_id);
 		tl_y += lineHeight;
 	}
 
-	if (!iv->study_date.isEmpty())
+	if (cfg.show_study_date && !iv->study_date.isEmpty())
 	{
 		drawShadow(vr.left() + margin, tl_y, iv->study_date);
 		tl_y += lineHeight;
 	}
 
-	if (!iv->series_description.isEmpty())
+	if (cfg.show_series_desc && !iv->series_description.isEmpty())
 	{
 		drawShadow(vr.left() + margin, tl_y, iv->series_description);
 		tl_y += lineHeight;
@@ -396,52 +399,61 @@ void GraphicsView::drawForeground(QPainter * painter, const QRectF & rect)
 
 	// 2. TOP-RIGHT: Instituição, Modalidade, Parâmetros de aquisição
 	int tr_y = vr.top() + margin + lineHeight;
-	if (!iv->institution.isEmpty())
+	if (cfg.show_institution && !iv->institution.isEmpty())
 	{
 		drawShadowRight(tr_y, iv->institution);
 		tr_y += lineHeight;
 	}
 
-	if (!iv->modality.isEmpty())
+	if (cfg.show_modality && !iv->modality.isEmpty())
 	{
 		drawShadowRight(tr_y, iv->modality);
 		tr_y += lineHeight;
 	}
 
-	if (!iv->hardware_info.isEmpty())
+	if (cfg.show_tech_params)
 	{
-		drawShadowRight(tr_y, iv->hardware_info);
-		tr_y += lineHeight;
-	}
-	else if (!iv->mrtimes.isEmpty())
-	{
-		drawShadowRight(tr_y, iv->mrtimes);
-		tr_y += lineHeight;
+		if (!iv->hardware_info.isEmpty())
+		{
+			drawShadowRight(tr_y, iv->hardware_info);
+			tr_y += lineHeight;
+		}
+		else if (!iv->mrtimes.isEmpty())
+		{
+			drawShadowRight(tr_y, iv->mrtimes);
+			tr_y += lineHeight;
+		}
 	}
 
 	// 3. BOTTOM-LEFT: Im: X/Y, Posição (Loc: Z mm), Espessura (Thk: X mm), Zoom
 	int bl_y = vr.bottom() - margin;
-	const int zoomPercent = static_cast<int>(std::round(transform().m11() * 100.0));
-	drawShadow(vr.left() + margin, bl_y, QString("Zoom: %1%").arg(zoomPercent));
-	bl_y -= lineHeight;
-
-	if (iv->di->iz_spacing > 0.0)
+	if (cfg.show_zoom)
 	{
-		drawShadow(vr.left() + margin, bl_y, QString::asprintf("Thk: %.1f mm", iv->di->iz_spacing));
+		const int zoomPercent = static_cast<int>(std::round(transform().m11() * 100.0));
+		drawShadow(vr.left() + margin, bl_y, QString("Zoom: %1%").arg(zoomPercent));
 		bl_y -= lineHeight;
 	}
 
-	const double sliceLoc = iv->di->iz_origin + (iv->di->selected_z_slice * iv->di->iz_spacing);
-	drawShadow(vr.left() + margin, bl_y, QString::asprintf("Loc: %.1f mm", sliceLoc));
-	bl_y -= lineHeight;
+	if (cfg.show_thickness_loc)
+	{
+		if (iv->di->iz_spacing > 0.0)
+		{
+			drawShadow(vr.left() + margin, bl_y, QString::asprintf("Thk: %.1f mm", iv->di->iz_spacing));
+			bl_y -= lineHeight;
+		}
 
-	const int curSlice = iv->di->selected_z_slice + 1;
-	const int totalSlices = std::max(1, iv->di->idimz);
-	drawShadow(vr.left() + margin, bl_y, QString("Im: %1/%2").arg(curSlice).arg(totalSlices));
+		const double sliceLoc = iv->di->iz_origin + (iv->di->selected_z_slice * iv->di->iz_spacing);
+		drawShadow(vr.left() + margin, bl_y, QString::asprintf("Loc: %.1f mm", sliceLoc));
+		bl_y -= lineHeight;
+
+		const int curSlice = iv->di->selected_z_slice + 1;
+		const int totalSlices = std::max(1, iv->di->idimz);
+		drawShadow(vr.left() + margin, bl_y, QString("Im: %1/%2").arg(curSlice).arg(totalSlices));
+	}
 
 	// 4. BOTTOM-RIGHT: WL: X WW: Y e leitura dinâmica de HU sob o cursor
 	int br_y = vr.bottom() - margin;
-	if (parent->info_line && !parent->info_line->text().isEmpty())
+	if (cfg.show_hu_probe && parent->info_line && !parent->info_line->text().isEmpty())
 	{
 		drawShadowRight(br_y, parent->info_line->text());
 		br_y -= lineHeight;

@@ -762,6 +762,10 @@ set(ALIZAMS_SRCS ${ALIZAMS_SRCS}
   "browser/anonymazerwidget2.cpp"
   "GUI/radiantinputdispatcher.cpp"
   "GUI/radiantshortcutsmanager.cpp"
+  "GUI/radiantexportdialog.cpp"
+  "GUI/radiantconfigdialog.cpp"
+  "GUI/radiantfiltermanager.cpp"
+  "GUI/radiantoverlaywindow.cpp"
   "GUI/aliza.cpp")
 
 if(NOT ALIZA_MEDIASTORAGE_MODE)
@@ -811,6 +815,10 @@ set(ALIZAMS_MOC_HRDS
   "GUI/srwidget.h"
   "GUI/radiantinputdispatcher.h"
   "GUI/radiantshortcutsmanager.h"
+  "GUI/radiantexportdialog.h"
+  "GUI/radiantconfigdialog.h"
+  "GUI/radiantfiltermanager.h"
+  "GUI/radiantoverlaywindow.h"
   "GUI/aliza.h")
 
 if(APPLE)

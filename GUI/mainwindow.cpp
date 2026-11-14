@@ -72,9 +72,9 @@ MainWindow::MainWindow(
 		settings.endGroup();
 	}
 	dockWidget1 = new QDockWidget(this);
-	dockWidget1->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+	dockWidget1->setAllowedAreas(Qt::AllDockWidgetAreas);
 	dockWidget1->setFloating(false);
-	dockWidget1->setFeatures(QDockWidget::DockWidgetMovable);
+	dockWidget1->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetClosable);
 	addDockWidget(Qt::LeftDockWidgetArea, dockWidget1);
 	imagesbox_frame1 = new QFrame(this);
 	imagesbox_frame1->setFrameShape(QFrame::NoFrame);
@@ -435,8 +435,8 @@ MainWindow::MainWindow(
 	//
 	if (ok3d && glwidget)
 	{
-		gl_frame->show();
-		glwidget->show();
+		gl_frame->hide();
+		frame3D->hide();
 		view3d_label->setText(QString("Physical space, intensity projection, GPU"));
 		slicesAct->setChecked(true);
 		raycastAct->setChecked(false);

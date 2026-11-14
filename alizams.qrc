@@ -78,7 +78,24 @@
 		<file>bitmaps/f2.svg</file>
 		<file>bitmaps/zoomin.svg</file>
 		<file>bitmaps/zoomout.svg</file>
+		<file>bitmaps/radiant_open_folder.svg</file>
+		<file>bitmaps/radiant_open_cd.svg</file>
+		<file>bitmaps/radiant_pacs_download.svg</file>
+		<file>bitmaps/radiant_export.svg</file>
+		<file>bitmaps/radiant_grid.svg</file>
+		<file>bitmaps/radiant_text_overlay.svg</file>
+		<file>bitmaps/radiant_mouse.svg</file>
+		<file>bitmaps/radiant_wl.svg</file>
+		<file>bitmaps/radiant_pan.svg</file>
+		<file>bitmaps/radiant_zoom.svg</file>
+		<file>bitmaps/radiant_measure.svg</file>
+		<file>bitmaps/radiant_filters.svg</file>
+		<file>bitmaps/radiant_transform.svg</file>
+		<file>bitmaps/radiant_cine.svg</file>
+		<file>bitmaps/radiant_mpr.svg</file>
+		<file>bitmaps/radiant_3d.svg</file>
+		<file>bitmaps/radiant_help.svg</file>
+		<file>bitmaps/radiant_config.svg</file>
 		<file>GUI/dark_radiant.qss</file>
 	</qresource>
 </RCC>
-

@@ -36,9 +36,7 @@
 #include <QTimer>
 #include <QStorageInfo>
 
-#ifdef _WIN32
-#include <windows.h>
-#endif
+
 
 RadiantShortcutsManager::RadiantShortcutsManager(MainWindow * mainWindow, QObject * parent)
     : QObject(parent ? parent : mainWindow), mw(mainWindow)
@@ -414,22 +412,15 @@ void RadiantShortcutsManager::trigger_open_cd()
 {
     // Search for optical drives or removable media
     QString cdPath;
-#ifdef _WIN32
-    DWORD drives = GetLogicalDrives();
-    for (char c = 'D'; c <= 'Z'; ++c)
+    const auto volumes = QStorageInfo::mountedVolumes();
+    for (const QStorageInfo & vol : volumes)
     {
-        if (drives & (1 << (c - 'A')))
+        if (vol.isValid() && vol.isReady() && vol.isReadOnly())
         {
-            QString root = QString("%1:\\").arg(c);
-            UINT type = GetDriveTypeW(reinterpret_cast<LPCWSTR>(root.utf16()));
-            if (type == DRIVE_CDROM)
-            {
-                cdPath = root;
-                break;
-            }
+            cdPath = vol.rootPath();
+            break;
         }
     }
-#endif
 
     if (cdPath.isEmpty())
     {

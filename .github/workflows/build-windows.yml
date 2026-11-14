@@ -65,7 +65,10 @@ jobs:
       run: |
         $ws = "${{ runner.workspace }}".Replace('\', '/')
         
-        $itkFile = Get-ChildItem -Path "$ws" -Filter "ITKConfig.cmake" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        $itkFile = Get-ChildItem -Path "$ws", "$env:GITHUB_WORKSPACE" -Filter "ITKConfig.cmake" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $itkFile) {
+            $itkFile = Get-ChildItem -Path "C:/", "D:/" -Filter "ITKConfig.cmake" -Recurse -Depth 5 -ErrorAction SilentlyContinue | Select-Object -First 1
+        }
         if (-not $itkFile) {
             Write-Error "ITKConfig.cmake não encontrado no workspace!"
             exit 1

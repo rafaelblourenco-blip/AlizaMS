@@ -2,7 +2,19 @@
 #include "mainwindow.h"
 #include "graphicswidget.h"
 #include "graphicsview.h"
+#if QT_VERSION >= QT_VERSION_CHECK(5,0,0)
+#ifdef ALIZA_GL_3_2_CORE
+#include "CG/glwidget-qt5-core.h"
+#else
 #include "CG/glwidget-qt5.h"
+#endif
+#else
+#ifdef ALIZA_GL_3_2_CORE
+#include "CG/glwidget-qt4-core.h"
+#else
+#include "CG/glwidget-qt4.h"
+#endif
+#endif
 #include "radiantinputdispatcher.h"
 #include "radiantshortcutsmanager.h"
 #include "radiantexportdialog.h"

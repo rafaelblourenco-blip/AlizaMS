@@ -40,7 +40,7 @@ ProjectionImage render_itk(
     const auto spacing = input->GetSpacing();
     for (unsigned int axis=0; axis<3; ++axis)
         if (!(spacing[axis] > 0) || !std::isfinite(spacing[axis])) return {};
-    const double step = std::min({spacing[0], spacing[1], spacing[2]});
+    const double step = (std::min)({spacing[0], spacing[1], spacing[2]});
     const double half_count = std::ceil((thickness_mm * 0.5) / step);
     const double work = static_cast<double>(width) * height * (2 * half_count + 1);
     const double pixels = static_cast<double>(width) * height;

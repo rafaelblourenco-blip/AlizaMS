@@ -22,5 +22,38 @@ int main() {
     const Vector3 center=output_center(pivot,u,v,13,87,256,128,0.7,5.0);
     same(pixel_position(center,u,v,13,87,256,128,0.7,5.0),pivot,"pivot preservation");
     same(pixel_position(center,u,v,14,87,256,128,0.7,5.0),add(pivot,multiply(u,0.7)),"pixel spacing");
+    // Plane intersection is in physical millimetres even when the output
+    // has unequal pixel spacing or is translated from the source origin.
+    const Plane axial{{10,20,30},{1,0,0},{0,1,0}};
+    const Plane sagittal{{13,20,30},{0,1,0},{0,0,1}};
+    Line2D line;
+    require(reference_line(axial,sagittal,line),"orthogonal reference line");
+    require(close(line.u,3) && close(line.v,0) && close(std::abs(line.dv),1),"translated intersection");
+    const Vector3 obliqueNormal=rotate({1,0,0},{0,0,1},pi/4);
+    const Plane oblique{{13,20,30},rotate({0,1,0},{0,0,1},pi/4),{0,0,1}};
+    require(reference_line(axial,oblique,line),"oblique reference line");
+    for (double t : {-7.0,0.0,9.0}) {
+        const double x=line.u+t*line.du, y=line.v+t*line.dv;
+        require(close(dot(obliqueNormal, add(add(axial.center,multiply(axial.u,x)),
+                                             add(multiply(axial.v,y),multiply(oblique.center,-1)))),0),
+                "oblique intersection lies on target plane");
+    }
+    require(!reference_line(axial,axial,line),"parallel planes do not define line");
+    PlaneSet planes;
+    planes.planes[0] = {{0,0,0},{0,1,0},{0,0,1}};
+    planes.planes[1] = {{0,0,0},{1,0,0},{0,0,1}};
+    planes.planes[2] = {{0,0,0},{1,0,0},{0,1,0}};
+    planes.set_pivot({3,8,12});
+    require(planes.rotate_target(2,1,pi/6),"rotate coronal in axial view");
+    for (unsigned view=0; view<3; ++view) {
+        same(planes.planes[view].center,{3,8,12},"shared pivot");
+        require(close(dot(planes.planes[view].u,planes.planes[view].v),0),"plane orthogonality");
+    }
+    require(reference_line(planes.planes[2],planes.planes[1],line),"rotated plane reference");
+    require(close(line.u,0) && close(line.v,0),"reference goes through shared pivot");
+    require(!planes.rotate_target(2,2,pi/4),"reject rotating current plane around itself");
+    planes.set_pivot({9,-2,5});
+    require(reference_line(planes.planes[0],planes.planes[1],line),"reference after navigation");
+    require(close(line.u,0) && close(line.v,0),"navigation preserves shared intersection");
     std::cout << "MPR geometry tests passed\n";
 }

@@ -8,7 +8,7 @@ using namespace mpr_slab;
 static void require(bool condition, const char *message) {
     if (!condition) { std::cerr << message << '\n'; std::exit(1); }
 }
-static bool near(double a, double b) { return std::abs(a-b) < 1e-7; }
+static bool approx_equal(double a, double b) { return std::abs(a-b) < 1e-7; }
 int main() {
     auto image = Image::New();
     Image::IndexType start; start[0]=4; start[1]=7; start[2]=11;
@@ -33,17 +33,17 @@ int main() {
         require(out.pixels.IsNotNull() && out.valid.IsNotNull() && out.all_valid,"projection allocation");
         itk::Index<2> i; i.Fill(0); return out.pixels->GetPixel(i);
     };
-    require(near(value(Mode::Maximum,10),-800),"ITK MIP");
-    require(near(value(Mode::Minimum,10),-1000),"ITK MinIP");
-    require(near(value(Mode::Mean,10),-900),"ITK mean");
-    require(near(value(Mode::Mean,0),-900),"ITK thin");
+    require(approx_equal(value(Mode::Maximum,10),-800),"ITK MIP");
+    require(approx_equal(value(Mode::Minimum,10),-1000),"ITK MinIP");
+    require(approx_equal(value(Mode::Mean,10),-900),"ITK mean");
+    require(approx_equal(value(Mode::Mean,0),-900),"ITK thin");
     const double q=std::sqrt(0.5);
     // Cross(u,v)=(q,0,q), testing oblique interpolation in physical space.
     const Vector3 ou{0,1,0}, ov{-q,0,q};
     auto oblique=render_itk<Image>(image.GetPointer(),center,ou,ov,1,1,2,3,4,Mode::Maximum);
     require(oblique.pixels.IsNotNull() && oblique.all_valid,"ITK oblique allocation");
     itk::Index<2> i; i.Fill(0);
-    require(near(oblique.pixels->GetPixel(i),-900+40*q),"ITK oblique interpolation");
+    require(approx_equal(oblique.pixels->GetPixel(i),-900+40*q),"ITK oblique interpolation");
     const auto rejected=render_itk<Image>(image.GetPointer(),center,u,v,100000,100000,2,3,10,Mode::Maximum);
     require(rejected.pixels.IsNull(),"projection work budget");
     auto badBasis=render_itk<Image>(image.GetPointer(),center,u,u,1,1,2,3,4,Mode::Mean);

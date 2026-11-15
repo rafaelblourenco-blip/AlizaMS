@@ -13,6 +13,7 @@ public:
     std::atomic<bool> cancelled{false};
     unsigned long long generation{0};
     unsigned int width{0}, height{0};
+    std::function<void(const mpr_slab::ProjectionImage &)> completion;
     std::function<mpr_slab::ProjectionImage(const std::atomic<bool> *)> render;
     mpr_slab::ProjectionImage result;
     void run() override {

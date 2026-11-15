@@ -3,7 +3,7 @@
 #include "graphicswidget.h"
 #include "common/mprgeometry.h"
 #include "common/mprslabitk.h"
-#include "mprslabworker.h"
+#include "mprslabscheduler.h"
 #include <QtGlobal>
 #include <QVBoxLayout>
 #include <QSplitter>
@@ -1863,46 +1863,7 @@ template<typename T> double get_distance(
 
 void GraphicsWidget::cancel_slab_workers()
 {
-	++m_slab_generation;
-	for (SlabProjectionWorker * worker : m_slab_workers) worker->cancelled.store(true);
-	delete m_slab_queued;
-	m_slab_queued = nullptr;
-}
-
-void GraphicsWidget::start_slab_worker(SlabProjectionWorker * worker)
-{
-	m_slab_workers.append(worker);
-	connect(worker, &QThread::finished, this, [this, worker]() {
-		m_slab_workers.removeOne(worker);
-		if (!worker->cancelled.load() && worker->generation == m_slab_generation)
-		{
-			m_slab_pending = false;
-			if (worker->result.pixels.IsNotNull() && worker->result.valid.IsNotNull())
-			{
-				image_container.image2D->pD = worker->result.pixels;
-				m_slab_mask = worker->result.valid;
-				image_container.image2D->idimx = worker->width;
-				image_container.image2D->idimy = worker->height;
-				image_container.image2D->image_type = 6;
-				update_image(0, false, false);
-			}
-			else
-			{
-				m_slab_mode = 0;
-				m_slab_thickness_mm = 0.0;
-				m_slab_error = QString("Projecao indisponivel para esta imagem");
-				graphicsview->viewport()->update();
-			}
-		}
-		worker->deleteLater();
-		if (m_slab_queued && m_slab_workers.size() < 2)
-		{
-			SlabProjectionWorker * next = m_slab_queued;
-			m_slab_queued = nullptr;
-			start_slab_worker(next);
-		}
-	});
-	worker->start();
+	if (m_slab_scheduler) m_slab_scheduler->cancel();
 }
 
 GraphicsWidget::GraphicsWidget(
@@ -1923,6 +1884,7 @@ GraphicsWidget::GraphicsWidget(
 	single_frame_ptr(single_frame),
 	multi_frame_ptr(multi_frame)
 {
+	m_slab_scheduler = new SlabScheduler(this);
 	anim2D_timer = new QTimer(this);
 	anim2D_timer->setSingleShot(true);
 	connect(anim2D_timer, SIGNAL(timeout()), this, SLOT(animate_()));
@@ -1938,13 +1900,8 @@ GraphicsWidget::GraphicsWidget(
 
 GraphicsWidget::~GraphicsWidget()
 {
-	cancel_slab_workers();
-	for (SlabProjectionWorker * worker : m_slab_workers)
-	{
-		worker->wait();
-		delete worker;
-	}
-	m_slab_workers.clear();
+	delete m_slab_scheduler;
+	m_slab_scheduler = nullptr;
 	run__ = false;
 	if (image_container.image2D)
 	{
@@ -3011,7 +2968,6 @@ void GraphicsWidget::set_oblique_slice_2D(
 		cancel_slab_workers();
 		m_slab_pending = true;
 		m_slab_error.clear();
-		const auto generation = m_slab_generation;
 		const auto mode = m_slab_mode == 1 ? mpr_slab::Mode::Maximum :
 			(m_slab_mode == 2 ? mpr_slab::Mode::Minimum : mpr_slab::Mode::Mean);
 		const mpr_geometry::Vector3 c{centerPoint[0], centerPoint[1], centerPoint[2]};
@@ -3019,9 +2975,6 @@ void GraphicsWidget::set_oblique_slice_2D(
 		const mpr_geometry::Vector3 w{vecV[0], vecV[1], vecV[2]};
 		const double thickness = m_slab_thickness_mm;
 		auto worker = new SlabProjectionWorker();
-		worker->generation = generation;
-		worker->width = width;
-		worker->height = height;
 		auto prepare = [&](const auto & input) {
 			if (input.IsNotNull())
 				worker->render = [input, c, u, w, width, height, spacingU, spacingV, thickness, mode](const std::atomic<bool> *cancel) {
@@ -3042,8 +2995,25 @@ void GraphicsWidget::set_oblique_slice_2D(
 		case 8: prepare(v->pULL); break;
 		default: break;
 		}
-		if (m_slab_workers.size() >= 2) m_slab_queued = worker;
-		else start_slab_worker(worker);
+		m_slab_scheduler->request(worker, [this, width, height](const mpr_slab::ProjectionImage & result) {
+			m_slab_pending = false;
+			if (result.pixels.IsNotNull() && result.valid.IsNotNull())
+			{
+				image_container.image2D->pD = result.pixels;
+				m_slab_mask = result.valid;
+				image_container.image2D->idimx = width;
+				image_container.image2D->idimy = height;
+				image_container.image2D->image_type = 6;
+				update_image(0, false, false);
+			}
+			else
+			{
+				m_slab_mode = 0;
+				m_slab_thickness_mm = 0.0;
+				m_slab_error = QString("Projecao indisponivel para esta imagem");
+				graphicsview->viewport()->update();
+			}
+		});
 		graphicsview->viewport()->update();
 		return;
 	}

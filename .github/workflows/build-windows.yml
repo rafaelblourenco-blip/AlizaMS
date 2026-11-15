@@ -48,15 +48,16 @@ jobs:
       uses: actions/cache@v4
       with:
         path: ${{ runner.workspace }}/itk-install
-        key: ${{ runner.os }}-itk-5.3.0-modular-msvc2022-v5
+        key: ${{ runner.os }}-itk-5.3.0-modular-msvc2022-v6-eigen-install
 
     - name: Build Modular ITK (if not cached)
       shell: pwsh
       run: |
         $ws = "${{ runner.workspace }}".Replace('\', '/')
         $itkConfigFile = Get-ChildItem -Path "$ws/itk-install" -Filter "ITKConfig.cmake" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($itkConfigFile) {
-            Write-Output ">> ITK disponivel e valido em: $($itkConfigFile.FullName)"
+        $eigenConfigFile = Get-ChildItem -Path "$ws/itk-install" -Filter "ITKInternalEigen3Config.cmake" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($itkConfigFile -and $eigenConfigFile) {
+            Write-Output ">> ITK e Eigen interno disponiveis em: $($itkConfigFile.FullName)"
             exit 0
         }
         Write-Output ">> ITK nao encontrado. Iniciando compilacao do ITK 5.3..."
@@ -86,19 +87,33 @@ jobs:
         if ($LASTEXITCODE -ne 0) { throw "Configuracao do ITK falhou (codigo $LASTEXITCODE)" }
         cmake --build . --config Release --target install --parallel 4
         if ($LASTEXITCODE -ne 0) { throw "Compilacao do ITK falhou (codigo $LASTEXITCODE)" }
+        # ITK's internal Eigen is a separate CMake project. Install it explicitly:
+        # an incomplete install may otherwise work from itk-build and fail when
+        # only itk-install is restored from cache on a later runner.
+        $eigenBuild = "$ws/itk-build/ITKInternalEigen3-build"
+        if (-not (Test-Path "$eigenBuild/CMakeCache.txt")) { throw "Projeto interno Eigen do ITK nao encontrado em $eigenBuild" }
+        cmake --build "$eigenBuild" --config Release --target install
+        if ($LASTEXITCODE -ne 0) { throw "Instalacao do Eigen interno falhou (codigo $LASTEXITCODE)" }
+        $eigenConfigFile = Get-ChildItem -Path "$ws/itk-install" -Filter "ITKInternalEigen3Config.cmake" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $eigenConfigFile) { throw "ITKInternalEigen3Config.cmake ausente apos instalacao" }
 
     - name: Configure Aliza MS
       shell: pwsh
       run: |
         $ws = "${{ runner.workspace }}".Replace('\', '/')
         
-        $itkFile = Get-ChildItem -Path "$ws" -Filter "ITKConfig.cmake" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        # Always consume the installed tree, never the temporary build tree.
+        $itkFile = Get-ChildItem -Path "$ws/itk-install" -Filter "ITKConfig.cmake" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
         if (-not $itkFile) {
             Write-Error "ITKConfig.cmake nao encontrado no workspace!"
             exit 1
         }
         $itkDir = $itkFile.DirectoryName.Replace('\', '/')
+        $eigenFile = Get-ChildItem -Path "$ws/itk-install" -Filter "ITKInternalEigen3Config.cmake" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $eigenFile) { throw "ITKInternalEigen3Config.cmake nao encontrado na instalacao do ITK" }
+        $eigenDir = $eigenFile.DirectoryName.Replace('\', '/')
         Write-Output ">> ITK configurado em: $itkDir"
+        Write-Output ">> Eigen interno configurado em: $eigenDir"
 
         $qtRoot = "$env:QT_ROOT_DIR".Replace('\', '/')
         $qt5Dir = "$qtRoot/lib/cmake/Qt5"
@@ -110,8 +125,9 @@ jobs:
           -DALIZA_QT_VERSION=5 `
           -DALIZA_BUILD_MPR_TESTS=ON `
           -DCMAKE_BUILD_TYPE=Release `
-          -DCMAKE_PREFIX_PATH="$qtRoot;$qtRoot/lib/cmake" `
+          -DCMAKE_PREFIX_PATH="$ws/itk-install;$qtRoot;$qtRoot/lib/cmake" `
           -DQt5_DIR="$qt5Dir" `
+          -DITKInternalEigen3_DIR="$eigenDir" `
           -DITK_DIR="$itkDir" `
           .. *>&1 | Tee-Object -FilePath "../cmake_config.log"
         if ($LASTEXITCODE -ne 0) {

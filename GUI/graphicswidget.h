@@ -23,7 +23,7 @@
 
 class QGraphicsPathItem;
 class Aliza;
-class SlabProjectionWorker;
+class SlabScheduler;
 
 class GraphicsWidget : public QWidget
 {
@@ -177,13 +177,10 @@ private:
 	int m_slab_mode{0};
 	double m_slab_thickness_mm{0.0};
 	Image2DTypeUC::Pointer m_slab_mask;
-	QList<SlabProjectionWorker*> m_slab_workers;
-	SlabProjectionWorker *m_slab_queued{nullptr};
-	unsigned long long m_slab_generation{0};
+	SlabScheduler *m_slab_scheduler{nullptr};
 	bool m_slab_pending{false};
 	QString m_slab_error;
 	void cancel_slab_workers();
-	void start_slab_worker(SlabProjectionWorker*);
 	bool update_projected_pixel_value(double, double);
 };
 

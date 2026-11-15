@@ -37,5 +37,43 @@ inline Vector3 pixel_position(Vector3 center, Vector3 u, Vector3 v,
     return add(center, add(multiply(u,(pixel_u-(width-1)*0.5)*spacing_u),
                            multiply(v,(pixel_v-(height-1)*0.5)*spacing_v)));
 }
+// Intersect a physical target plane with a displayed plane. Coordinates in
+// Line2D are millimetres along the displayed plane's unit U and V vectors.
+struct Plane { Vector3 center, u, v; };
+struct Line2D { double u, v, du, dv; };
+// All three planes share the same physical pivot; each plane retains its own
+// orientation. Pixel spacing and the viewport transform are separate state.
+struct PlaneSet {
+    Vector3 pivot;
+    Plane planes[3];
+    void set_pivot(Vector3 point) {
+        pivot = point;
+        for (auto &plane : planes) plane.center = point;
+    }
+    bool rotate_target(unsigned source, unsigned target, double angle) {
+        if (source >= 3 || target >= 3 || source == target || !std::isfinite(angle)) return false;
+        const Vector3 axis = cross(planes[source].u, planes[source].v);
+        if (std::abs(dot(axis, axis) - 1.0) > 1e-6) return false;
+        planes[target].u = rotate(planes[target].u, axis, angle);
+        planes[target].v = rotate(planes[target].v, axis, angle);
+        return true;
+    }
+};
+inline bool reference_line(const Plane &view, const Plane &target, Line2D &line) {
+    const Vector3 normal = cross(target.u, target.v);
+    const double a = dot(normal, view.u);
+    const double b = dot(normal, view.v);
+    const double squared = a*a + b*b;
+    if (!std::isfinite(squared) || squared < 1e-20) return false;
+    const double c = dot(normal, add(view.center, multiply(target.center, -1.0)));
+    if (!std::isfinite(c)) return false;
+    line.u = -c*a/squared;
+    line.v = -c*b/squared;
+    const double scale = std::sqrt(squared);
+    line.du = -b/scale;
+    line.dv = a/scale;
+    return true;
+}
+
 }
 #endif

@@ -157,6 +157,7 @@ private:
 	void set_win_old_position(int, int);
 	void set_win_new_position(int, int);
 	void set_win_last_position(int, int);
+	double reference_line_angle(const QPoint &) const;
 	void lines_at(double,double);
 	void measure();
 	void get_pixel_value(double,double);

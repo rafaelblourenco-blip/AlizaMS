@@ -1,6 +1,7 @@
 //#define A_TMP_BENCHMARK
 
 #include "graphicswidget.h"
+#include "common/mprgeometry.h"
 #include <QtGlobal>
 #include <QVBoxLayout>
 #include <QSplitter>
@@ -2427,6 +2428,7 @@ void GraphicsWidget::set_slice_2D(
 	int x{};
 	QString error_;
 	//
+	if (image_container.image3D != v) m_is_oblique_active = false;
 	image_container.image3D = v;
 	//
 	if (!image_container.image2D) return;
@@ -2725,12 +2727,17 @@ void GraphicsWidget::set_slice_2D(
 			if (graphicsview->pr_area->isVisible()) graphicsview->pr_area->hide();
 		}
 	}
+	// Rebuild the rotated slice after normal navigation has updated the indices.
+	if (m_is_oblique_active)
+		set_oblique_slice_2D(v, m_oblique_angle, axis, m_oblique_source_plane, false);
+
 }
 
 void GraphicsWidget::set_oblique_slice_2D(
 	ImageVariant * v,
 	double angle,
 	short target_plane,
+	short source_plane,
 	bool fastDraftMode)
 {
 	if (!v || !image_container.image2D) return;
@@ -2748,6 +2755,7 @@ void GraphicsWidget::set_oblique_slice_2D(
 
 	m_is_oblique_active = true;
 	m_oblique_angle = angle;
+	m_oblique_source_plane = source_plane;
 
 	// Clear previous 2D slices
 	if (image_container.image2D->pSS.IsNotNull())
@@ -2813,7 +2821,10 @@ void GraphicsWidget::set_oblique_slice_2D(
 	auto getVolumeInfo = [&](auto & ptr) {
 		if (ptr.IsNotNull())
 		{
-			ptr->TransformIndexToPhysicalPoint(centerIndex, centerPoint);
+			auto physicalIndex = centerIndex;
+			const auto regionStart = ptr->GetLargestPossibleRegion().GetIndex();
+			for (unsigned int i = 0; i < 3; ++i) physicalIndex[i] += regionStart[i];
+			ptr->TransformIndexToPhysicalPoint(physicalIndex, centerPoint);
 			inDir = ptr->GetDirection();
 		}
 	};
@@ -2842,15 +2853,13 @@ void GraphicsWidget::set_oblique_slice_2D(
 		e2[i] = inDir[i][2];
 	}
 
-	const double cosA = std::cos(angle);
-	const double sinA = std::sin(angle);
 	itk::Vector<double, 3> vecU, vecV;
 	unsigned int width = 512, height = 512;
 	double spacingU = 1.0, spacingV = 1.0;
 
 	if (target_plane == 1) // Coronal-like (rotated around Z)
 	{
-		vecU = e0 * cosA + e1 * sinA;
+		vecU = e0;
 		vecV = e2;
 		width = v->di ? v->di->idimx : 512;
 		height = v->di ? v->di->idimz : 512;
@@ -2859,7 +2868,7 @@ void GraphicsWidget::set_oblique_slice_2D(
 	}
 	else if (target_plane == 0) // Sagittal-like (rotated around Z)
 	{
-		vecU = e1 * cosA - e0 * sinA;
+		vecU = e1;
 		vecV = e2;
 		width = v->di ? v->di->idimy : 512;
 		height = v->di ? v->di->idimz : 512;
@@ -2868,13 +2877,40 @@ void GraphicsWidget::set_oblique_slice_2D(
 	}
 	else // target_plane == 2, Axial-like (rotated around Y/X)
 	{
-		vecU = e0 * cosA + e2 * sinA;
+		vecU = e0;
 		vecV = e1;
 		width = v->di ? v->di->idimx : 512;
 		height = v->di ? v->di->idimy : 512;
 		spacingU = v->di ? v->di->ix_spacing : 1.0;
 		spacingV = v->di ? v->di->iy_spacing : 1.0;
 	}
+
+	// The rotation axis is normal to the view where the line was dragged.
+	// Its horizontal and vertical image axes are (Y,Z), (X,Z), or (X,Y).
+	const itk::Vector<double, 3> sourceU = (source_plane == 0) ? e1 : e0;
+	const itk::Vector<double, 3> sourceV = (source_plane == 2) ? e1 : e2;
+	const mpr_geometry::Vector3 normal = mpr_geometry::cross(
+		{sourceU[0], sourceU[1], sourceU[2]}, {sourceV[0], sourceV[1], sourceV[2]});
+	auto rotate_in_source_plane = [&](const itk::Vector<double, 3> & v0) {
+		const mpr_geometry::Vector3 result = mpr_geometry::rotate(
+			{v0[0], v0[1], v0[2]}, normal, angle);
+		itk::Vector<double, 3> out;
+		out[0] = result.x; out[1] = result.y; out[2] = result.z;
+		return out;
+	};
+	vecU = rotate_in_source_plane(vecU);
+	vecV = rotate_in_source_plane(vecV);
+
+	// Keep the selected physical pivot at its original image coordinates.
+	const double pivotU = target_plane == 0 ? centerIndex[1] : centerIndex[0];
+	const double pivotV = target_plane == 2 ? centerIndex[1] : centerIndex[2];
+	const mpr_geometry::Vector3 outputCenter = mpr_geometry::output_center(
+		{centerPoint[0], centerPoint[1], centerPoint[2]},
+		{vecU[0], vecU[1], vecU[2]}, {vecV[0], vecV[1], vecV[2]},
+		pivotU, pivotV, width, height, spacingU, spacingV);
+	centerPoint[0] = outputCenter.x;
+	centerPoint[1] = outputCenter.y;
+	centerPoint[2] = outputCenter.z;
 
 	QString error_;
 	switch (v->image_type)
@@ -2956,6 +2992,12 @@ void GraphicsWidget::reset_oblique_slice()
 
 void GraphicsWidget::set_axis(int a)
 {
+	if (axis != a)
+	{
+		m_is_oblique_active = false;
+		m_oblique_angle = 0.0;
+		if (graphicsview) graphicsview->reset_reference_line_angles();
+	}
 	axis = a;
 }
 
@@ -3129,6 +3171,16 @@ void GraphicsWidget::set_info_line_text(const QString & s)
 void GraphicsWidget::set_measure_text(const QString & s)
 {
 	measure_label->setText(s);
+}
+
+void GraphicsWidget::set_reference_lines_visible(bool visible)
+{
+	reference_lines_visible = visible;
+	const bool show = visible && mouse_modus == 1;
+	graphicsview->line_x->setVisible(show);
+	graphicsview->line_y->setVisible(show);
+	graphicsview->line_z->setVisible(show);
+	if (show) update_frames();
 }
 
 void GraphicsWidget::update_frames()
@@ -3484,9 +3536,9 @@ void GraphicsWidget::set_mouse_modus(short m, bool us_regions)
 			}
 			graphicsview->measurment_line->hide();
 			graphicsview->set_empty_distance();
-			graphicsview->line_x->show();
-			graphicsview->line_y->show();
-			graphicsview->line_z->show();
+			graphicsview->line_x->setVisible(reference_lines_visible);
+			graphicsview->line_y->setVisible(reference_lines_visible);
+			graphicsview->line_z->setVisible(reference_lines_visible);
 			if (us_regions) graphicsview->draw_us_regions();
 			else            graphicsview->clear_us_regions();
 		}

@@ -27,6 +27,14 @@ jobs:
       with:
         arch: x64
 
+    - name: Test MPR physical geometry
+      shell: pwsh
+      run: |
+        cl /nologo /EHsc /std:c++14 tests\test_mpr_geometry.cpp /Fe:mpr_geometry_test.exe
+        if ($LASTEXITCODE -ne 0) { throw "Falha ao compilar testes de geometria MPR (codigo $LASTEXITCODE)" }
+        .\mpr_geometry_test.exe
+        if ($LASTEXITCODE -ne 0) { throw "Testes de geometria MPR falharam (codigo $LASTEXITCODE)" }
+
     - name: Cache ITK
       id: cache-itk
       uses: actions/cache@v4
@@ -48,6 +56,7 @@ jobs:
         Set-Location "$ws"
         if (-not (Test-Path "$ws/itk-src")) {
             git clone --depth 1 --branch v5.3.0 https://github.com/InsightSoftwareConsortium/ITK.git itk-src
+            if ($LASTEXITCODE -ne 0) { throw "Falha ao obter ITK (codigo $LASTEXITCODE)" }
         }
         Set-Location "$ws/itk-build"
         cmake -G "Visual Studio 17 2022" -A x64 `
@@ -66,7 +75,9 @@ jobs:
           -DModule_ITKTransform=ON `
           -DCMAKE_INSTALL_PREFIX="$ws/itk-install" `
           ../itk-src
+        if ($LASTEXITCODE -ne 0) { throw "Configuracao do ITK falhou (codigo $LASTEXITCODE)" }
         cmake --build . --config Release --target install --parallel 4
+        if ($LASTEXITCODE -ne 0) { throw "Compilacao do ITK falhou (codigo $LASTEXITCODE)" }
 
     - name: Configure Aliza MS
       shell: pwsh
@@ -141,7 +152,9 @@ jobs:
             Copy-Item "GUI/dark_radiant.qss" -Destination package/
         }
         windeployqt package/aliza.exe --no-translations --compiler-runtime
+        if ($LASTEXITCODE -ne 0) { throw "windeployqt falhou (codigo $LASTEXITCODE)" }
         7z a aliza-radiant-windows-x64.zip ./package/*
+        if ($LASTEXITCODE -ne 0) { throw "Empacotamento falhou (codigo $LASTEXITCODE)" }
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4

@@ -168,11 +168,11 @@ void RadiantOverlayWindow::setup_mpr_toolbar()
     QAction * actToggleLines = refMenu->addAction(QString("Mostrar/Ocultar Linhas de Referência"));
     actToggleLines->setCheckable(true);
     actToggleLines->setChecked(true);
-    connect(actToggleLines, SIGNAL(toggled(bool)), this, SLOT(on_mpr_ref_lines_toggled(bool)));
-    QAction * actRotMode = refMenu->addAction(QString("Modo Rotação Interativa (Arraste as extremidades)"));
-    connect(actRotMode, &QAction::triggered, [this]() {
-        on_mpr_ref_lines_toggled(true);
-    });
+    connect(actToggleLines, &QAction::toggled, act_mpr_ref_lines, &QAction::setChecked);
+    connect(act_mpr_ref_lines, &QAction::toggled, actToggleLines, &QAction::setChecked);
+    QAction * actRotMode = refMenu->addAction(QString("Rotação oblíqua - indisponível"));
+    actRotMode->setEnabled(false);
+    actRotMode->setToolTip(QString("Aguardando correção e validação da geometria física"));
     refMenu->addSeparator();
     QAction * actLockLines = refMenu->addAction(QString("Fixar Orientação Ortogonal Padrão"));
     connect(actLockLines, SIGNAL(triggered()), this, SLOT(on_mpr_reset_planes()));
@@ -180,12 +180,17 @@ void RadiantOverlayWindow::setup_mpr_toolbar()
 
     // 5. Slab MIP Thickness
     act_mpr_slab_mip = new QAction(QIcon(":/bitmaps/ray.svg"), QString("Modo Slab / MIP e Espessura"), this);
+    act_mpr_slab_mip->setToolTip(QString("Projecoes MIP, MinIP e Average ainda nao implementadas"));
     QMenu * slabMenu = new QMenu(toolbar);
     auto addSlabMode = [this, slabMenu](const QString & label, int mode, double thickness) {
-        QAction * a = slabMenu->addAction(label);
-        connect(a, &QAction::triggered, [this, mode, thickness]() {
-            on_mpr_slab_mip_thickness(mode, thickness);
-        });
+        QAction * a = slabMenu->addAction(mode == 0 ? label : label + QString(" - indisponivel"));
+        if (mode == 0)
+            connect(a, &QAction::triggered, [this, mode, thickness]() { on_mpr_slab_mip_thickness(mode, thickness); });
+        else
+        {
+            a->setEnabled(false);
+            a->setToolTip(QString("Projecao ainda nao implementada"));
+        }
     };
     addSlabMode(QString("Fatia Fina / Thin (1 voxel)"), 0, 0.0);
     slabMenu->addSeparator();
@@ -395,13 +400,12 @@ void RadiantOverlayWindow::on_mpr_zoom_factor(double factor)
 
 void RadiantOverlayWindow::on_mpr_ref_lines_toggled(bool checked)
 {
-    Q_UNUSED(checked);
     if (content)
     {
         const auto gwList = content->findChildren<GraphicsWidget*>();
         for (GraphicsWidget * gw : gwList)
         {
-            if (gw) gw->update_frames();
+            if (gw) gw->set_reference_lines_visible(checked);
         }
     }
 }

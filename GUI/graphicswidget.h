@@ -68,6 +68,7 @@ public:
 		const bool = false /*frame level, to avoid check map twice*/);
 	void clear_();
 	void update_frames();
+	void set_reference_lines_visible(bool);
 	void clear_slice_pixmap_cache();
 	QCache<QString, QPixmap> m_slice_pixmap_cache;
 	ImageContainer image_container;
@@ -116,6 +117,7 @@ public:
 		ImageVariant * v,
 		double angle,
 		short target_plane,
+		short source_plane,
 		bool fastDraftMode = false);
 	void reset_oblique_slice();
 	bool is_oblique() const { return m_is_oblique_active; }
@@ -148,6 +150,7 @@ private:
 	short  mouse_modus{};
 	bool   enable_shutter{true};
 	bool   enable_overlays{true};
+	bool   reference_lines_visible{true};
 	int    frame_time_unit{}; // 0 - ms; 1 - s
 	int    frametime_2D{120};
 	double contours_width{};
@@ -163,6 +166,7 @@ private:
 	bool show_cursor{};
 	bool m_is_oblique_active{false};
 	double m_oblique_angle{0.0};
+	short m_oblique_source_plane{2};
 };
 
 #endif

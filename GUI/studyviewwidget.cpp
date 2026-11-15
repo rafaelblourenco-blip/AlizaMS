@@ -10,6 +10,7 @@
 #include <QGridLayout>
 #include <QVariant>
 #include <QKeySequence>
+#include <QMenu>
 #include <cmath>
 #if MATRIX_BUTTON_CUSTOM_ACT == 1
 #include "tabledialog.h"
@@ -106,6 +107,27 @@ StudyViewWidget::StudyViewWidget(bool vertical, bool tab, float si)
 	}
 	//
 	readSettings();
+}
+
+QMenu * StudyViewWidget::create_toolbar_menu(QWidget * menuParent)
+{
+	QMenu * menu = new QMenu(menuParent);
+	QMenu * layouts = menu->addMenu(tr("Layout do estudo"));
+	for (int rows = 1; rows <= 4; ++rows)
+		for (int columns = 1; columns <= 4; ++columns)
+		{
+			QAction * action = layouts->addAction(QString("%1 x %2").arg(rows).arg(columns));
+			connect(action, &QAction::triggered, this, [this, rows, columns]() {
+				update_grid(rows, columns);
+			});
+		}
+	menu->addAction(fitall_Action);
+	menu->addAction(scouts_Action);
+	menu->addAction(measure_Action);
+	menu->addAction(anchor_Action);
+	// Detached study windows still need their own controls.
+	if (in_tab) toolbar_frame->hide();
+	return menu;
 }
 
 StudyViewWidget::~StudyViewWidget()

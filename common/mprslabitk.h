@@ -8,8 +8,85 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 
 namespace mpr_slab {
+// Set the shared physical pivot only when it lies within voxel-center bounds.
+template <typename TInput>
+bool set_pivot_itk(mpr_geometry::PlaneSet &state, mpr_geometry::Vector3 candidate,
+                   const TInput *input, double *relative_voxel = nullptr)
+{
+    if (!input || !std::isfinite(candidate.x) || !std::isfinite(candidate.y) || !std::isfinite(candidate.z)) return false;
+    typename TInput::PointType point; point[0]=candidate.x; point[1]=candidate.y; point[2]=candidate.z;
+    itk::ContinuousIndex<double,3> index;
+    input->TransformPhysicalPointToContinuousIndex(point,index);
+    const auto region=input->GetLargestPossibleRegion();
+    const auto start=region.GetIndex(); const auto size=region.GetSize();
+    for (unsigned int i=0; i<3; ++i) {
+        if (!size[i] || !std::isfinite(index[i]) || index[i]<static_cast<double>(start[i])-1e-8 ||
+            index[i]>static_cast<double>(start[i])+static_cast<double>(size[i]-1)+1e-8) return false;
+    }
+    state.set_pivot(candidate);
+    if (relative_voxel) for (unsigned int i=0; i<3; ++i) relative_voxel[i]=index[i]-start[i];
+    return true;
+}
+// Move a shared pivot in millimetres along a plane normal, preserving bounds.
+template <typename TInput>
+bool advance_pivot_itk(mpr_geometry::PlaneSet &state, unsigned int plane,
+                       double distance_mm, const TInput *input)
+{
+    if (!input || plane >= 3 || !std::isfinite(distance_mm)) return false;
+    auto normal=mpr_geometry::cross(state.planes[plane].u,state.planes[plane].v);
+    const double length=std::sqrt(mpr_geometry::dot(normal,normal));
+    if (!std::isfinite(length) || length < 1e-12) return false;
+    normal=mpr_geometry::multiply(normal,1.0/length);
+    return set_pivot_itk(state,mpr_geometry::add(state.pivot,mpr_geometry::multiply(normal,distance_mm)),input);
+}
+
+// Slider bounds are expressed in whole steps from its current value. One step
+// has unit length in continuous voxel-index space along the physical normal.
+template <typename TInput>
+bool navigation_bounds_itk(const mpr_geometry::PlaneSet &state, unsigned plane,
+                           int sign, int current, const TInput *input,
+                           int &minimum, int &maximum)
+{
+    if (!input || plane>=3 || (sign!=1 && sign!=-1)) return false;
+    auto normal=mpr_geometry::cross(state.planes[plane].u,state.planes[plane].v);
+    const double length=std::sqrt(mpr_geometry::dot(normal,normal));
+    if (!(length>1e-12) || !std::isfinite(length)) return false;
+    normal=mpr_geometry::multiply(normal,sign/length);
+    typename TInput::PointType p,q;
+    p[0]=state.pivot.x; p[1]=state.pivot.y; p[2]=state.pivot.z;
+    q[0]=p[0]+normal.x; q[1]=p[1]+normal.y; q[2]=p[2]+normal.z;
+    itk::ContinuousIndex<double,3> i0,i1;
+    input->TransformPhysicalPointToContinuousIndex(p,i0);
+    input->TransformPhysicalPointToContinuousIndex(q,i1);
+    const auto region=input->GetLargestPossibleRegion();
+    const auto start=region.GetIndex(); const auto size=region.GetSize();
+    double low=-(std::numeric_limits<double>::infinity)();
+    double high=(std::numeric_limits<double>::infinity)();
+    double squared=0;
+    for (unsigned a=0; a<3; ++a) {
+        if (!size[a] || !std::isfinite(i0[a]) || !std::isfinite(i1[a])) return false;
+        const double d=i1[a]-i0[a], lo=static_cast<double>(start[a]);
+        const double hi=lo+static_cast<double>(size[a]-1);
+        if (i0[a]<lo-1e-8 || i0[a]>hi+1e-8) return false;
+        squared+=d*d;
+        if (std::abs(d)<1e-15) continue;
+        double t0=(lo-i0[a])/d, t1=(hi-i0[a])/d;
+        if (t0>t1) { const double tmp=t0; t0=t1; t1=tmp; }
+        if (t0>low) low=t0;
+        if (t1<high) high=t1;
+    }
+    if (!(squared>0) || !std::isfinite(low) || !std::isfinite(high)) return false;
+    const double step=1.0/std::sqrt(squared);
+    const double minValue=static_cast<double>(current)+std::ceil(low/step-1e-9);
+    const double maxValue=static_cast<double>(current)+std::floor(high/step+1e-9);
+    if (minValue < (std::numeric_limits<int>::min)() || maxValue > (std::numeric_limits<int>::max)() || minValue>maxValue) return false;
+    minimum=static_cast<int>(minValue); maximum=static_cast<int>(maxValue);
+    return true;
+}
+
 // The mask distinguishes pixels outside the input from valid zero intensity.
 struct ProjectionImage {
     itk::Image<double, 2>::Pointer pixels;

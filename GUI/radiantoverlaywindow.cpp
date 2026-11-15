@@ -1,6 +1,7 @@
 #include "radiantoverlaywindow.h"
 #include "mainwindow.h"
 #include "graphicswidget.h"
+#include "mprstate.h"
 #include "graphicsview.h"
 #if QT_VERSION >= QT_VERSION_CHECK(5,0,0)
 #ifdef ALIZA_GL_3_2_CORE
@@ -23,6 +24,9 @@
 #include <QToolButton>
 #include <QIcon>
 #include <QSize>
+#include <QSettings>
+#include <QApplication>
+#include <QActionGroup>
 
 RadiantOverlayWindow::RadiantOverlayWindow(
     const QString & title,
@@ -170,6 +174,39 @@ void RadiantOverlayWindow::setup_mpr_toolbar()
     actToggleLines->setChecked(true);
     connect(actToggleLines, &QAction::toggled, act_mpr_ref_lines, &QAction::setChecked);
     connect(act_mpr_ref_lines, &QAction::toggled, actToggleLines, &QAction::setChecked);
+    // Cosmetic pens keep the requested width stable when the image is zoomed.
+    QSettings refSettings(QSettings::IniFormat, QSettings::UserScope,
+                          QApplication::organizationName(), QApplication::applicationName());
+    const int savedWidth = qBound(1, refSettings.value(QString("MPR/referenceLineWidth"), 1).toInt(), 4);
+    auto applyReferenceWidth = [this](int width) {
+        if (!content) return;
+        for (GraphicsWidget * gw : content->findChildren<GraphicsWidget*>()) {
+            if (!gw || !gw->graphicsview) continue;
+            for (QGraphicsPathItem * line : {gw->graphicsview->line_x, gw->graphicsview->line_y, gw->graphicsview->line_z}) {
+                if (!line) continue;
+                QPen pen = line->pen();
+                pen.setWidth(width);
+                pen.setCosmetic(true);
+                line->setPen(pen);
+            }
+        }
+    };
+    QMenu * widthMenu = refMenu->addMenu(QString("Espessura das linhas"));
+    QActionGroup * widthGroup = new QActionGroup(widthMenu);
+    widthGroup->setExclusive(true);
+    for (int width = 1; width <= 4; ++width) {
+        QAction * choice = widthMenu->addAction(QString("%1 px").arg(width));
+        choice->setCheckable(true);
+        choice->setChecked(width == savedWidth);
+        widthGroup->addAction(choice);
+        connect(choice, &QAction::triggered, this, [applyReferenceWidth, width]() {
+            QSettings settings(QSettings::IniFormat, QSettings::UserScope,
+                               QApplication::organizationName(), QApplication::applicationName());
+            settings.setValue(QString("MPR/referenceLineWidth"), width);
+            applyReferenceWidth(width);
+        });
+    }
+    applyReferenceWidth(savedWidth);
     QAction * actRotMode = refMenu->addAction(QString("Rotação oblíqua - indisponível"));
     actRotMode->setEnabled(false);
     actRotMode->setToolTip(QString("Aguardando correção e validação da geometria física"));
@@ -409,11 +446,27 @@ void RadiantOverlayWindow::on_mpr_reset_planes()
     const auto gwList = content->findChildren<GraphicsWidget*>();
     for (GraphicsWidget * gw : gwList)
     {
+        if (gw && gw->mpr_state() && gw->mpr_state()->enabled)
+        {
+            gw->mpr_state()->reset_orientation();
+            break;
+        }
+    }
+    for (GraphicsWidget * gw : gwList)
+    {
         if (gw)
         {
             if (gw->graphicsview) gw->graphicsview->reset_reference_line_angles();
             gw->reset_oblique_slice();
             gw->update_frames();
+        }
+    }
+    for (GraphicsWidget * gw : gwList)
+    {
+        if (gw && gw->graphicsview && gw->mpr_state() && gw->mpr_state()->enabled)
+        {
+            gw->graphicsview->sync_mpr_sliders();
+            break;
         }
     }
 }

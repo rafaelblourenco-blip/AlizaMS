@@ -4,6 +4,7 @@
 #include "common/mprgeometry.h"
 #include "common/mprslabitk.h"
 #include "mprslabscheduler.h"
+#include "mprstate.h"
 #include <QtGlobal>
 #include <QVBoxLayout>
 #include <QSplitter>
@@ -1647,7 +1648,7 @@ template<typename T> void load_image(
 #endif
 		if (axis == 2)
 		{
-			if (widget->slab_mode() == 0 && widget->get_enable_overlays())
+			if (widget->slab_mode() == 0 && !widget->is_oblique() && widget->get_enable_overlays())
 				GraphicsUtils::draw_overlays(ivariant, tmpi);
 		}
 		else
@@ -1737,13 +1738,31 @@ template<typename T> void load_image(
 		top_string = GraphicsUtils::flip_label(old_left);
 		left_string = old_top;
 	}
+	if (widget->is_oblique() && widget->mpr_state() && widget->mpr_state()->enabled)
+	{
+		left_string.clear(); top_string.clear();
+		bool invertible=false;
+		const QTransform inverse=t.inverted(&invertible);
+		if (!hide_orientation && invertible && !rai.isEmpty())
+		{
+			const auto &plane=widget->mpr_state()->planes.planes[axis];
+			const QPointF zero=inverse.map(QPointF(0,0));
+			auto directionAt = [&](const QPointF &screen) {
+				const QPointF d=inverse.map(screen)-zero;
+				return mpr_geometry::add(mpr_geometry::multiply(plane.u,d.x()*spacing[0]),
+				                         mpr_geometry::multiply(plane.v,d.y()*spacing[1]));
+			};
+			left_string=QString::fromStdString(mpr_geometry::anatomical_direction(directionAt(QPointF(-1,0))));
+			top_string=QString::fromStdString(mpr_geometry::anatomical_direction(directionAt(QPointF(0,-1))));
+		}
+	}
 	widget->set_top_label_text(top_string);
 	widget->set_left_label_text(left_string);
 	//
-	if (widget->slab_mode() == 0 && redraw_contours && axis == 2)
+	if (widget->slab_mode() == 0 && !widget->is_oblique() && redraw_contours && axis == 2)
 		draw_contours(ivariant, widget);
 	//
-	if (widget->slab_mode() == 0)
+	if (widget->slab_mode() == 0 && !widget->is_oblique())
 	{
 		widget->graphicsview->draw_shutter(ivariant);
 		widget->graphicsview->draw_prgraphics(ivariant);
@@ -2430,6 +2449,48 @@ float GraphicsWidget::get_offset_y()
 	return offset_y;
 }
 
+void GraphicsWidget::update_mpr_state(ImageVariant *v)
+{
+	if (!m_mpr_state || !v || !v->di || !v->equi) return;
+	const int dimensions[3] = {v->di->idimx, v->di->idimy, v->di->idimz};
+	const int selected[3] = {v->di->selected_x_slice, v->di->selected_y_slice, v->di->selected_z_slice};
+	if (dimensions[0] <= 0 || dimensions[1] <= 0 || dimensions[2] <= 0) return;
+	auto update = [&](const auto &input) {
+		if (input.IsNull()) return;
+		auto index = input->GetLargestPossibleRegion().GetIndex();
+		for (unsigned int i=0; i<3; ++i)
+			index[i] += std::max(0, std::min(selected[i], dimensions[i]-1));
+		itk::Point<double, 3> p;
+		input->TransformIndexToPhysicalPoint(index, p);
+		const auto direction = input->GetDirection();
+		const mpr_geometry::Vector3 pivot{p[0],p[1],p[2]};
+		const mpr_geometry::Vector3 e0{direction[0][0],direction[1][0],direction[2][0]};
+		const mpr_geometry::Vector3 e1{direction[0][1],direction[1][1],direction[2][1]};
+		const mpr_geometry::Vector3 e2{direction[0][2],direction[1][2],direction[2][2]};
+		if (!m_mpr_state->initialized || m_mpr_state->volume != v ||
+			m_mpr_state->input.GetPointer() != input.GetPointer())
+		{
+			m_mpr_state->reset(v,input.GetPointer(),pivot,e0,e1,e2);
+			for (unsigned i=0; i<3; ++i) m_mpr_state->sliderStep[i]=selected[i];
+		}
+		else if (!m_mpr_state->enabled) m_mpr_state->planes.set_pivot(pivot);
+		itk::Point<double,3> current;
+		current[0]=m_mpr_state->planes.pivot.x; current[1]=m_mpr_state->planes.pivot.y; current[2]=m_mpr_state->planes.pivot.z;
+		itk::ContinuousIndex<double,3> continuous;
+		input->TransformPhysicalPointToContinuousIndex(current,continuous);
+		const auto start=input->GetLargestPossibleRegion().GetIndex();
+		for (unsigned i=0; i<3; ++i) m_mpr_state->voxel[i]=continuous[i]-start[i];
+	};
+	switch (v->image_type)
+	{
+	case 0: update(v->pSS); break; case 1: update(v->pUS); break;
+	case 2: update(v->pSI); break; case 3: update(v->pUI); break;
+	case 4: update(v->pUC); break; case 5: update(v->pF); break;
+	case 6: update(v->pD); break; case 7: update(v->pSLL); break;
+	case 8: update(v->pULL); break; default: break;
+	}
+}
+
 void GraphicsWidget::set_slice_2D(
 	ImageVariant * v,
 	const short fit,
@@ -2476,6 +2537,7 @@ void GraphicsWidget::set_slice_2D(
 		m_slab_error.clear();
 	}
 	image_container.image3D = v;
+	update_mpr_state(v);
 	//
 	if (!image_container.image2D) return;
 	//
@@ -2774,7 +2836,7 @@ void GraphicsWidget::set_slice_2D(
 		}
 	}
 	// Rebuild the rotated slice after normal navigation has updated the indices.
-	if (m_is_oblique_active || m_slab_mode != 0)
+	if (m_is_oblique_active || m_slab_mode != 0 || (m_mpr_state && m_mpr_state->enabled))
 		set_oblique_slice_2D(v, m_oblique_angle, axis, m_oblique_source_plane, false);
 
 }
@@ -2790,8 +2852,10 @@ void GraphicsWidget::set_oblique_slice_2D(
 
 	image_container.image3D = v;
 
+	const bool sharedPlane = m_mpr_state && m_mpr_state->enabled &&
+		m_mpr_state->initialized && m_mpr_state->volume == v && target_plane >= 0 && target_plane < 3;
 	// Check if rotation angle is practically zero
-	if (std::abs(angle) < 1e-4 && m_slab_mode == 0)
+	if (!sharedPlane && std::abs(angle) < 1e-4 && m_slab_mode == 0)
 	{
 		m_is_oblique_active = false;
 		m_oblique_angle = 0.0;
@@ -2799,7 +2863,7 @@ void GraphicsWidget::set_oblique_slice_2D(
 		return;
 	}
 
-	m_is_oblique_active = std::abs(angle) >= 1e-4;
+	m_is_oblique_active = sharedPlane || std::abs(angle) >= 1e-4;
 	m_oblique_angle = angle;
 	m_oblique_source_plane = source_plane;
 
@@ -2951,10 +3015,19 @@ void GraphicsWidget::set_oblique_slice_2D(
 	};
 	vecU = rotate_in_source_plane(vecU);
 	vecV = rotate_in_source_plane(vecV);
+	if (sharedPlane)
+	{
+		const auto & plane = m_mpr_state->planes.planes[target_plane];
+		vecU[0] = plane.u.x; vecU[1] = plane.u.y; vecU[2] = plane.u.z;
+		vecV[0] = plane.v.x; vecV[1] = plane.v.y; vecV[2] = plane.v.z;
+		centerPoint[0] = plane.center.x; centerPoint[1] = plane.center.y; centerPoint[2] = plane.center.z;
+	}
 
 	// Keep the selected physical pivot at its original image coordinates.
-	const double pivotU = target_plane == 0 ? centerIndex[1] : centerIndex[0];
-	const double pivotV = target_plane == 2 ? centerIndex[1] : centerIndex[2];
+	const double pivotU = sharedPlane ? m_mpr_state->voxel[target_plane == 0 ? 1 : 0] :
+		(target_plane == 0 ? centerIndex[1] : centerIndex[0]);
+	const double pivotV = sharedPlane ? m_mpr_state->voxel[target_plane == 2 ? 1 : 2] :
+		(target_plane == 2 ? centerIndex[1] : centerIndex[2]);
 	const mpr_geometry::Vector3 outputCenter = mpr_geometry::output_center(
 		{centerPoint[0], centerPoint[1], centerPoint[2]},
 		{vecU[0], vecU[1], vecU[2]}, {vecV[0], vecV[1], vecV[2]},
@@ -2962,6 +3035,40 @@ void GraphicsWidget::set_oblique_slice_2D(
 	centerPoint[0] = outputCenter.x;
 	centerPoint[1] = outputCenter.y;
 	centerPoint[2] = outputCenter.z;
+
+	if (sharedPlane && m_slab_mode == 0)
+	{
+		const mpr_geometry::Vector3 c{centerPoint[0],centerPoint[1],centerPoint[2]};
+		const mpr_geometry::Vector3 u{vecU[0],vecU[1],vecU[2]};
+		const mpr_geometry::Vector3 w{vecV[0],vecV[1],vecV[2]};
+		auto render = [&](const auto &input) {
+			if (input.IsNull()) return;
+			const auto out=mpr_slab::render_itk(input.GetPointer(),c,u,w,width,height,
+				spacingU,spacingV,0.0,mpr_slab::Mode::Mean);
+			image_container.image2D->pD=out.pixels;
+			m_slab_mask=out.valid;
+		};
+		switch (v->image_type)
+		{
+		case 0: render(v->pSS); break; case 1: render(v->pUS); break;
+		case 2: render(v->pSI); break; case 3: render(v->pUI); break;
+		case 4: render(v->pUC); break; case 5: render(v->pF); break;
+		case 6: render(v->pD); break; case 7: render(v->pSLL); break;
+		case 8: render(v->pULL); break; default: break;
+		}
+		if (image_container.image2D->pD.IsNotNull() && m_slab_mask.IsNotNull())
+		{
+			image_container.image2D->idimx=width;
+			image_container.image2D->idimy=height;
+			image_container.image2D->image_type=6;
+			update_image(0,false,false);
+		}
+		else
+		{
+			graphicsview->recover_mpr_views();
+		}
+		return;
+	}
 
 	if (m_slab_mode != 0)
 	{
@@ -3097,6 +3204,117 @@ bool GraphicsWidget::set_slab_projection(int mode, double thickness_mm)
 	m_slab_thickness_mm = mode ? thickness_mm : 0.0;
 	set_slice_2D(v, 0, false);
 	return mode == 0 || m_slab_pending;
+}
+
+bool GraphicsWidget::handle_mpr_point(double x, double y)
+{
+	if (!m_mpr_state || !m_mpr_state->enabled) return false;
+	if (!m_mpr_state->initialized || !image_container.image3D || !image_container.image3D->di ||
+		!image_container.image2D || image_container.image2D->pD.IsNull() || axis < 0 || axis > 2) return true;
+	ImageVariant *v=image_container.image3D;
+	const auto &plane=m_mpr_state->planes.planes[axis];
+	const auto spacing=image_container.image2D->pD->GetSpacing();
+	const double pivotU=m_mpr_state->voxel[axis == 0 ? 1 : 0] + 0.5;
+	const double pivotV=m_mpr_state->voxel[axis == 2 ? 1 : 2] + 0.5;
+	const auto candidate=mpr_geometry::add(m_mpr_state->planes.pivot,
+		mpr_geometry::add(mpr_geometry::multiply(plane.u,(x-pivotU)*spacing[0]),
+		                  mpr_geometry::multiply(plane.v,(y-pivotV)*spacing[1])));
+	bool moved=false;
+	auto set=[&](const auto &input) {
+		if (input.IsNotNull()) moved=mpr_slab::set_pivot_itk(m_mpr_state->planes,candidate,input.GetPointer(),m_mpr_state->voxel);
+	};
+	switch (v->image_type) {
+	case 0: set(v->pSS); break; case 1: set(v->pUS); break; case 2: set(v->pSI); break;
+	case 3: set(v->pUI); break; case 4: set(v->pUC); break; case 5: set(v->pF); break;
+	case 6: set(v->pD); break; case 7: set(v->pSLL); break; case 8: set(v->pULL); break; default: break;
+	}
+	if (moved)
+	{
+		v->di->selected_x_slice=static_cast<int>(std::round(m_mpr_state->voxel[0]));
+		v->di->selected_y_slice=static_cast<int>(std::round(m_mpr_state->voxel[1]));
+		v->di->selected_z_slice=static_cast<int>(std::round(m_mpr_state->voxel[2]));
+		graphicsview->sync_mpr_sliders();
+		graphicsview->refresh_mpr_views();
+	}
+	return true;
+}
+
+bool GraphicsWidget::handle_mpr_slider(int j)
+{
+	if (!m_mpr_state || !m_mpr_state->enabled || !m_mpr_state->initialized ||
+		!image_container.image3D || !image_container.image3D->di || axis < 0 || axis > 2) return false;
+	ImageVariant *v=image_container.image3D;
+	const int previous=m_mpr_state->sliderStep[axis];
+	const int delta=j-previous;
+	if (!delta) return true;
+	bool moved=false;
+	auto advance=[&](const auto &input) {
+		if (input.IsNull()) return;
+		const auto &plane=m_mpr_state->planes.planes[axis];
+		const auto normal=mpr_geometry::cross(plane.u,plane.v);
+		const auto pivot=m_mpr_state->planes.pivot;
+		itk::Point<double,3> p,q;
+		p[0]=pivot.x; p[1]=pivot.y; p[2]=pivot.z;
+		q[0]=pivot.x+normal.x; q[1]=pivot.y+normal.y; q[2]=pivot.z+normal.z;
+		itk::ContinuousIndex<double,3> i0,i1;
+		input->TransformPhysicalPointToContinuousIndex(p,i0);
+		input->TransformPhysicalPointToContinuousIndex(q,i1);
+		double squared=0; for (unsigned k=0;k<3;++k) squared+=(i1[k]-i0[k])*(i1[k]-i0[k]);
+		if (!(squared>0) || !std::isfinite(squared)) return;
+		if (!mpr_slab::advance_pivot_itk(m_mpr_state->planes,axis,
+			delta*m_mpr_state->axisNormalSign[axis]/std::sqrt(squared),input.GetPointer())) return;
+		const auto updated=m_mpr_state->planes.pivot;
+		p[0]=updated.x; p[1]=updated.y; p[2]=updated.z;
+		input->TransformPhysicalPointToContinuousIndex(p,i0);
+		const auto start=input->GetLargestPossibleRegion().GetIndex();
+		for (unsigned k=0;k<3;++k) m_mpr_state->voxel[k]=i0[k]-start[k];
+		v->di->selected_x_slice=static_cast<int>(std::round(m_mpr_state->voxel[0]));
+		v->di->selected_y_slice=static_cast<int>(std::round(m_mpr_state->voxel[1]));
+		v->di->selected_z_slice=static_cast<int>(std::round(m_mpr_state->voxel[2]));
+		moved=true;
+	};
+	switch (v->image_type) {
+	case 0: advance(v->pSS); break; case 1: advance(v->pUS); break;
+	case 2: advance(v->pSI); break; case 3: advance(v->pUI); break;
+	case 4: advance(v->pUC); break; case 5: advance(v->pF); break;
+	case 6: advance(v->pD); break; case 7: advance(v->pSLL); break;
+	case 8: advance(v->pULL); break; default: break;
+	}
+	if (moved)
+	{
+		m_mpr_state->sliderStep[axis]=j;
+		graphicsview->sync_mpr_sliders();
+		graphicsview->refresh_mpr_views();
+	}
+	else if (slider_m && slider_m->slices_slider)
+	{
+		const bool blocked=slider_m->slices_slider->blockSignals(true);
+		slider_m->set_slice(previous);
+		slider_m->slices_slider->blockSignals(blocked);
+	}
+	return true;
+}
+
+void GraphicsWidget::recover_mpr_failure()
+{
+	m_is_oblique_active=false;
+	m_oblique_angle=0.0;
+	m_slab_mode=0;
+	m_slab_pending=false;
+	m_slab_mask=nullptr;
+	m_slab_error=QString("Reconstrucao obliqua indisponivel");
+	if (graphicsview) graphicsview->reset_reference_line_angles();
+	if (slider_m && slider_m->slices_slider && image_container.image3D && image_container.image3D->di && axis>=0 && axis<3)
+	{
+		const auto *di=image_container.image3D->di;
+		const int size=axis==0 ? di->idimx : (axis==1 ? di->idimy : di->idimz);
+		const int value=axis==0 ? di->selected_x_slice : (axis==1 ? di->selected_y_slice : di->selected_z_slice);
+		const bool blocked=slider_m->slices_slider->blockSignals(true);
+		slider_m->slices_slider->setRange(0,std::max(0,size-1));
+		slider_m->set_slice(value);
+		slider_m->slices_slider->blockSignals(blocked);
+	}
+	if (image_container.image3D) set_slice_2D(image_container.image3D,0,false);
 }
 
 void GraphicsWidget::reset_oblique_slice()
@@ -3372,6 +3590,32 @@ void GraphicsWidget::update_measurement(
 	double y1)
 {
 	if (!image_container.image3D) return;
+	if ((m_is_oblique_active || m_slab_mode != 0) && m_slab_mask.IsNotNull() &&
+		image_container.image2D && image_container.image2D->pD.IsNotNull())
+	{
+		const int steps = std::max(1, static_cast<int>(std::ceil(std::max(std::abs(x1-x0),std::abs(y1-y0)))));
+		for (int i=0; i<=steps; ++i)
+		{
+			const double t=static_cast<double>(i)/steps;
+			const double x=x0+(x1-x0)*t, y=y0+(y1-y0)*t;
+			if (x<0 || y<0) { set_measure_text(QString()); graphicsview->measurment_line->setPath(QPainterPath()); return; }
+			Image2DTypeUC::IndexType index; index[0]=static_cast<long>(x); index[1]=static_cast<long>(y);
+			if (!m_slab_mask->GetLargestPossibleRegion().IsInside(index) || !m_slab_mask->GetPixel(index))
+			{
+				set_measure_text(QString());
+				graphicsview->measurment_line->setPath(QPainterPath());
+				return;
+			}
+		}
+		const auto spacing=image_container.image2D->pD->GetSpacing();
+		const double distance=mpr_geometry::planar_distance(x0,y0,x1,y1,spacing[0],spacing[1]);
+		QPainterPath path; path.moveTo(x0,y0); path.lineTo(x1,y1);
+		QPen pen; pen.setBrush(QBrush(Qt::cyan)); pen.setWidth(0);
+		graphicsview->measurment_line->setPen(pen);
+		graphicsview->measurment_line->setPath(path);
+		set_measure_text(QString::number(distance,'f',3)+QString(" mm"));
+		return;
+	}
 	const ImageVariant * ivariant = image_container.image3D;
 	const int a = get_axis();
 	QString tmp0;
@@ -3731,7 +3975,7 @@ bool GraphicsWidget::get_show_cursor() const
 
 bool GraphicsWidget::update_projected_pixel_value(double x, double y)
 {
-	if (m_slab_mode == 0 || m_slab_mask.IsNull()) return false;
+	if ((m_slab_mode == 0 && !m_is_oblique_active) || m_slab_mask.IsNull()) return false;
 	if (!image_container.image2D || image_container.image2D->pD.IsNull() || x < 0 || y < 0)
 	{
 		info_line->clear();
@@ -4047,7 +4291,7 @@ void GraphicsWidget::show_image_info()
 void GraphicsWidget::set_contours_width(double x)
 {
 	contours_width = x;
-	if (image_container.image3D && m_slab_mode == 0)
+	if (image_container.image3D && m_slab_mode == 0 && !m_is_oblique_active)
 		draw_contours(image_container.image3D, this);
 }
 

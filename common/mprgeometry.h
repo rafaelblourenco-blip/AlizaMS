@@ -2,6 +2,7 @@
 #define ALIZA_MPR_GEOMETRY_H
 
 #include <cmath>
+#include <string>
 
 // All vectors and positions here use physical units, not display pixels.
 namespace mpr_geometry {
@@ -37,10 +38,38 @@ inline Vector3 pixel_position(Vector3 center, Vector3 u, Vector3 v,
     return add(center, add(multiply(u,(pixel_u-(width-1)*0.5)*spacing_u),
                            multiply(v,(pixel_v-(height-1)*0.5)*spacing_v)));
 }
+// ITK DICOM patient coordinates are LPS: +X left, +Y posterior, +Z superior.
+inline std::string anatomical_direction(Vector3 v) {
+    const double values[3]={v.x,v.y,v.z};
+    const char positive[3]={'L','P','S'}, negative[3]={'R','A','I'};
+    int order[3]={0,1,2};
+    for (int i=0; i<3; ++i) for (int j=i+1; j<3; ++j)
+        if (std::abs(values[order[j]]) > std::abs(values[order[i]])) {
+            const int temp=order[i]; order[i]=order[j]; order[j]=temp;
+        }
+    const double largest=std::abs(values[order[0]]);
+    if (!(largest>0) || !std::isfinite(largest)) return {};
+    std::string result;
+    for (int i=0; i<3; ++i) {
+        const int axis=order[i];
+        if (std::abs(values[axis]) >= largest*0.2)
+            result += values[axis]>0 ? positive[axis] : negative[axis];
+    }
+    return result;
+}
+inline double planar_distance(double u0, double v0, double u1, double v1,
+                              double spacing_u, double spacing_v) {
+    return std::hypot((u1-u0)*spacing_u, (v1-v0)*spacing_v);
+}
 // Intersect a physical target plane with a displayed plane. Coordinates in
 // Line2D are millimetres along the displayed plane's unit U and V vectors.
 struct Plane { Vector3 center, u, v; };
 struct Line2D { double u, v, du, dv; };
+// Preserve increasing original-index direction even when the plane basis is
+// left-handed or the coronal plane normal points toward the negative axis.
+inline int normal_orientation(Vector3 u, Vector3 v, Vector3 positive_axis) {
+    return dot(cross(u,v),positive_axis) < 0.0 ? -1 : 1;
+}
 // All three planes share the same physical pivot; each plane retains its own
 // orientation. Pixel spacing and the viewport transform are separate state.
 struct PlaneSet {
@@ -52,8 +81,11 @@ struct PlaneSet {
     }
     bool rotate_target(unsigned source, unsigned target, double angle) {
         if (source >= 3 || target >= 3 || source == target || !std::isfinite(angle)) return false;
+        const auto finite = [](Vector3 x) { return std::isfinite(x.x) && std::isfinite(x.y) && std::isfinite(x.z); };
+        if (!finite(planes[source].u) || !finite(planes[source].v) ||
+            !finite(planes[target].u) || !finite(planes[target].v)) return false;
         const Vector3 axis = cross(planes[source].u, planes[source].v);
-        if (std::abs(dot(axis, axis) - 1.0) > 1e-6) return false;
+        if (!finite(axis) || std::abs(dot(axis, axis) - 1.0) > 1e-6) return false;
         planes[target].u = rotate(planes[target].u, axis, angle);
         planes[target].v = rotate(planes[target].v, axis, angle);
         return true;

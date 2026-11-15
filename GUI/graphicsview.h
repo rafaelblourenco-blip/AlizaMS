@@ -93,6 +93,9 @@ public:
 	void clear_measurements();
 	void delete_selected_measurement();
 	void reset_reference_line_angles();
+	void recover_mpr_views();
+	void refresh_mpr_views();
+	void sync_mpr_sliders();
 	double get_ref_angle_h() const { return m_ref_angle_h; }
 	double get_ref_angle_v() const { return m_ref_angle_v; }
 	void set_ref_angle_h(double a) { m_ref_angle_h = a; }
@@ -149,6 +152,7 @@ private:
 	int m_hover_ref_end{0};
 	QPointF m_rotation_pivot_scene;
 	double m_initial_mouse_angle{0.0};
+	double m_applied_drag_angle{0.0};
 	double m_start_rotation_angle{0.0};
 	QPointF m_handle_h1_scene;
 	QPointF m_handle_h2_scene;

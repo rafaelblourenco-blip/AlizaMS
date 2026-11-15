@@ -15,6 +15,7 @@ class MatrixButton;
 class ImageContainer;
 class LUTWidget;
 class Aliza;
+class QMenu;
 
 class StudyViewWidget : public QWidget, public Ui::StudyViewWidget
 {
@@ -46,6 +47,7 @@ public:
 	void restore_multi();
 	void writeSettings(QSettings&);
 	void update_background_color();
+	QMenu * create_toolbar_menu(QWidget * parent);
 	QAction * fitall_Action;
 	QAction * scouts_Action;
 	QAction * measure_Action;

@@ -20,10 +20,12 @@
 #include <QCloseEvent>
 #include <QProgressDialog>
 #include <QCache>
+#include <memory>
 
 class QGraphicsPathItem;
 class Aliza;
 class SlabScheduler;
+struct MprSharedState;
 
 class GraphicsWidget : public QWidget
 {
@@ -69,6 +71,8 @@ public:
 		const bool = false /*frame level, to avoid check map twice*/);
 	void clear_();
 	void update_frames();
+	void set_mpr_state(const std::shared_ptr<MprSharedState> & state) { m_mpr_state = state; }
+	const std::shared_ptr<MprSharedState> & mpr_state() const { return m_mpr_state; }
 	void set_reference_lines_visible(bool);
 	void clear_slice_pixmap_cache();
 	QCache<QString, QPixmap> m_slice_pixmap_cache;
@@ -121,6 +125,9 @@ public:
 		short source_plane,
 		bool fastDraftMode = false);
 	void reset_oblique_slice();
+	void recover_mpr_failure();
+	bool handle_mpr_slider(int);
+	bool handle_mpr_point(double, double);
 	bool set_slab_projection(int mode, double thickness_mm);
 	const Image2DTypeUC::Pointer & slab_mask() const { return m_slab_mask; }
 	int slab_mode() const { return m_slab_mode; }
@@ -148,6 +155,7 @@ protected:
 	void leaveEvent(QEvent*) override;
 
 private:
+	std::shared_ptr<MprSharedState> m_mpr_state;
 	short  axis;
 	bool   main{};
 	bool   multi{};
@@ -181,6 +189,7 @@ private:
 	bool m_slab_pending{false};
 	QString m_slab_error;
 	void cancel_slab_workers();
+	void update_mpr_state(ImageVariant*);
 	bool update_projected_pixel_value(double, double);
 };
 

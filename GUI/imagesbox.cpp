@@ -184,6 +184,7 @@ ImagesBox::ImagesBox(float si)
 	listWidget->addAction(actionClearUnChek);
 	listWidget->addAction(actionColor);
 	listWidget->addAction(actionDICOMMeta);
+	listWidget->addAction(actionContours);
 #if 0
 	listWidget->addAction(actionTmp);
 #endif
@@ -213,7 +214,6 @@ ImagesBox::ImagesBox(float si)
 	toolButton7->setMenu(studyMenu);
 	toolButton7->setPopupMode(QToolButton::InstantPopup);
 	toolbar->addWidget(toolButton7);
-	toolbar->addAction(actionReloadHistogram);
 	toolbar->addAction(actionClear);
 	toolbar->addAction(actionClearAll);
 	QWidget * spacer = new QWidget(this);
@@ -275,8 +275,9 @@ ImagesBox::ImagesBox(float si)
 	QWidget * spacer2 = new QWidget(this);
 	spacer2->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
 	toolbar2->addWidget(spacer2);
-	toolbar2->addAction(actionContours);
-	toolbar2->addAction(actionInfo);
+	// Image details are available through DICOM metadata; preserve the
+	// thumbnail area and expose contours through its context menu.
+	toolbar2_frame->hide();
 	//
 	map['R'] = QString("right to left");
 	map['L'] = QString("left to right");

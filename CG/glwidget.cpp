@@ -855,9 +855,9 @@ void GLWidget::init_()
 	letterl = nullptr;
 	pan_x = 0;
 	pan_y = 0;
-	clear_color_r = 0.9f;
-	clear_color_g = 0.9f;
-	clear_color_b = 0.9f;
+	clear_color_r = 0.0f;
+	clear_color_g = 0.0f;
+	clear_color_b = 0.0f;
 }
 
 GLWidget::~GLWidget()
@@ -3352,9 +3352,10 @@ void GLWidget::set_view_mip()
 
 void GLWidget::set_clear_color(float red, float green, float blue)
 {
-	clear_color_r = red;
-	clear_color_g = green;
-	clear_color_b = blue;
+	(void)red; (void)green; (void)blue;
+	clear_color_r = 0.0f;
+	clear_color_g = 0.0f;
+	clear_color_b = 0.0f;
 }
 
 void GLWidget::set_show_cube(bool t)

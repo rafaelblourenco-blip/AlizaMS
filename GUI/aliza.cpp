@@ -363,178 +363,10 @@ static void debounce_check_slice_collisions(const ImageVariant * v, GraphicsWidg
 
 void check_slice_collisions(const ImageVariant * v, GraphicsWidget * w)
 {
-#ifdef ALIZA_PERF_COLLISION
-	const auto t0 = std::chrono::steady_clock::now();
-#endif
-	if (!w) return;
-	if (w->get_axis() != 2) return;
-	w->graphicsview->clear_collision_paths();
-	if (!show_all_study_collisions) return;
-	if (!g_collisionWorld) return;
-	if (!v) return;
-#if 1
-	if (v->frame_of_ref_uid.isEmpty()) return;
-#endif
-	const int z = v->di->selected_z_slice;
-	const int slices_size = v->di->image_slices.size();
-	if (v->di->idimz != slices_size) return;
-	if (z >= slices_size) return;
-	QList<const ImageVariant*> refs;
-	if (selected_images.size() > 1)
-	{
-		search_frame_of_ref2(v->id, v->frame_of_ref_uid, v->study_uid, refs);
-	}
-	else
-	{
-		search_frame_of_ref(v->id, v->frame_of_ref_uid, v->study_uid, refs);
-	}
-	if (refs.empty()) return;
-	btAlignedObjectArray<btStaticPlaneShape*> tmp_shapes;
-	btAlignedObjectArray<btCollisionObject*> tmp_objects;
-	tmp_shapes.resize(0);
-	tmp_objects.resize(0);
-	add_slice_collision_plane(
-		v,
-		z,
-		2,
-		tmp_shapes,
-		tmp_objects);
-#if 1
-	// TODO check, maybe computeOverlappingPairs() is enough
-	// or nothing?
-	g_collisionWorld->performDiscreteCollisionDetection();
-#endif
-	for (int u = 0; u < refs.size(); ++u)
-	{
-		const int z1 = refs.at(u)->di->selected_z_slice;
-		if (z1 >= static_cast<int>(refs.at(u)->di->image_slices.size()))
-		{
-			continue;
-		}
-		if (check_slices_parallel(v, z, refs.at(u), z1))
-		{
-			continue;
-		}
-		std::vector< std::array<float, 2> > hits;
-		for (int q = 0; q < 4; ++q)
-		{
-			int k0 = 0, k1 = 1, k2 = 2, k3 = 3, k4 = 4, k5 = 5;
-			switch (q)
-			{
-			case 1:
-				k0 = 3;
-				k1 = 4;
-				k2 = 5;
-				k3 = 6;
-				k4 = 7;
-				k5 = 8;
-				break;
-			case 2:
-				k0 = 6;
-				k1 = 7;
-				k2 = 8;
-				k3 = 9;
-				k4 = 10;
-				k5 = 11;
-				break;
-			case 3:
-				k0 = 9;
-				k1 = 10;
-				k2 = 11;
-				k3 = 0;
-				k4 = 1;
-				k5 = 2;
-				break;
-			default:
-				break;
-			}
-			const btVector3 from(
-				refs.at(u)->di->image_slices.at(z1)->fv[k0],
-				refs.at(u)->di->image_slices.at(z1)->fv[k1],
-				refs.at(u)->di->image_slices.at(z1)->fv[k2]);
-			const btVector3 to(
-				refs.at(u)->di->image_slices.at(z1)->fv[k3],
-				refs.at(u)->di->image_slices.at(z1)->fv[k4],
-				refs.at(u)->di->image_slices.at(z1)->fv[k5]);
-			ClosestRayResultCallback1 rayResult(from, to);
-			g_collisionWorld->rayTest(from, to, rayResult);
-			if (rayResult.hasHit())
-			{
-				const btCollisionObject * o = rayResult.m_collisionObject;
-				if (o)
-				{
-					const int * usrP = static_cast<int*>(o->getUserPointer());
-					if (usrP && usrP[0] == v->id)
-					{
-						const btVector3 hit = rayResult.m_hitPointWorld;
-						ImageTypeUC::Pointer image = ImageTypeUC::New();
-						const bool image_ok = ContourUtils::phys_space_from_slice(v, z, image);
-						if (image_ok)
-						{
-							itk::Point<float, 3> point;
-							point[0] = hit.getX();
-							point[1] = hit.getY();
-							point[2] = hit.getZ();
-#if ITK_VERSION_MAJOR >= 5
-							const auto index =
-								image->template TransformPhysicalPointToContinuousIndex<float>(point);
-#else
-							itk::ContinuousIndex<float, 3> index;
-							image->TransformPhysicalPointToContinuousIndex(point, index);
-#endif
-							hits.push_back({ { index[0], index[1] } });
-						}
-					}
-				}
-			}
-		}
-		if (hits.size() == 2)
-		{
-			const int R = static_cast<int>(refs.at(u)->di->R * 255.0f);
-			const int G = static_cast<int>(refs.at(u)->di->G * 255.0f);
-			const int B = static_cast<int>(refs.at(u)->di->B * 255.0f);
-			QPen pen;
-			pen.setBrush(QBrush(QColor(R, G, B, 255)));
-			pen.setStyle(Qt::SolidLine);
-			pen.setWidth(0);
-			QPainterPath pp;
-			pp.moveTo(hits.at(0).at(0), hits.at(0).at(1));
-			pp.lineTo(hits.at(1).at(0), hits.at(1).at(1));
-			QGraphicsPathItem * g = new QGraphicsPathItem();
-			g->setPen(pen);
-			g->setPath(pp);
-			w->graphicsview->scene()->addItem(g);
-			w->graphicsview->collision_paths.push_back(g);
-		}
-	}
-	for (int j = 0; j < tmp_objects.size(); ++j)
-	{
-		if (tmp_objects[j])
-		{
-			btCollisionObject * k = tmp_objects[j];
-			if (k->getUserPointer())
-			{
-				int * p = static_cast<int*>(k->getUserPointer());
-				delete [] p;
-			}
-			g_collisionWorld->removeCollisionObject(k);
-			delete tmp_objects[j];
-			tmp_objects[j] = nullptr;
-		}
-	}
-	for (int j = 0; j < tmp_shapes.size(); ++j)
-	{
-		if (tmp_shapes[j])
-		{
-			delete tmp_shapes[j];
-			tmp_shapes[j] = nullptr;
-		}
-	}
-#ifdef ALIZA_PERF_COLLISION
-	const auto t1 = std::chrono::steady_clock::now();
-	const auto ts = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0);
-	std::cout << ts.count() << " ns" << std::endl;
-#endif
+    Q_UNUSED(v);
+    // A single viewport has no other displayed plane to reference. Searching
+    // all loaded series here added misleading lines from hidden thumbnails.
+    if (w && w->graphicsview) w->graphicsview->clear_collision_paths();
 }
 
 void check_slice_collisions2(StudyViewWidget * w)
@@ -552,9 +384,10 @@ void check_slice_collisions2(StudyViewWidget * w)
 			w->widgets[x]->graphicswidget->graphicsview->clear_collision_paths();
 		}
 	}
+	if (!show_all_study_collisions) return;
 	for (int x = 0; x < widgets_size; ++x)
 	{
-		if (w->widgets.at(x) && w->widgets.at(x)->graphicswidget)
+		if (w->widgets.at(x) && w->widgets.at(x)->isVisible() && w->widgets.at(x)->graphicswidget)
 		{
 			if (w->widgets.at(x)->graphicswidget->image_container.image3D)
 			{
@@ -582,7 +415,7 @@ void check_slice_collisions2(StudyViewWidget * w)
 #endif
 				for (int u = 0; u < widgets_size; ++u)
 				{
-					if (!(w->widgets.at(u) && w->widgets.at(u)->graphicswidget)) continue;
+					if (!(w->widgets.at(u) && w->widgets.at(u)->isVisible() && w->widgets.at(u)->graphicswidget)) continue;
 					const ImageVariant * v1 = w->widgets.at(u)->graphicswidget->image_container.image3D;
 					if (!v1) continue;
 					if (v->id == v1->id) continue;
@@ -1978,6 +1811,7 @@ void Aliza::disconnect_tools()
 
 void Aliza::set_selected_slice2D_m(int j)
 {
+	if (graphicswidget_m && graphicswidget_m->handle_mpr_slider(j)) return;
 	ImageVariant * v = get_selected_image();
 	if (v)
 	{
@@ -2105,6 +1939,7 @@ void Aliza::set_selected_slice2D_m(int j)
 
 void Aliza::set_selected_slice2D_y(int j)
 {
+	if (graphicswidget_y && graphicswidget_y->handle_mpr_slider(j)) return;
 	ImageVariant * v = get_selected_image();
 	if (!v) return;
 	v->di->selected_y_slice = j;
@@ -2133,6 +1968,7 @@ void Aliza::set_selected_slice2D_y(int j)
 
 void Aliza::set_selected_slice2D_x(int j)
 {
+	if (graphicswidget_x && graphicswidget_x->handle_mpr_slider(j)) return;
 	ImageVariant * v = get_selected_image();
 	if (!v) return;
 	v->di->selected_x_slice = j;
@@ -2274,8 +2110,9 @@ void Aliza::set_histogram()
 	multiview = false;
 	histogram_mode = true;
 	graphicswidget_m->set_multiview(multiview);
-	const ImageVariant * v = get_selected_image_const();
-	if (v) histogramview->update__(v);
+	ImageVariant * v = get_selected_image();
+	if (v && v->histogram.isNull()) trigger_reload_histogram();
+	else if (v) histogramview->update__(v);
 }
 
 void Aliza::set_axis_zyx(bool rect_mode)
@@ -4222,6 +4059,7 @@ void Aliza::toggle_collisions(bool t)
 {
 	show_all_study_collisions = t;
 	check_slice_collisions(get_selected_image_const(), graphicswidget_m);
+	if (studyview && studyview->get_scouts()) check_slice_collisions2(studyview);
 }
 
 void Aliza::trigger_image_color()

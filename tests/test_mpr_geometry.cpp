@@ -2,6 +2,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 using namespace mpr_geometry;
 static void require(bool b, const char* what) { if (!b) { std::cerr << what << '\n'; std::exit(1); } }
 static bool close(double a, double b) { return std::abs(a-b) < 1e-10; }
@@ -18,6 +19,14 @@ int main() {
     const Vector3 reflected_u={-1,0,0}, reflected_v={0,1,0};
     const Vector3 reflected_normal=cross(reflected_u,reflected_v);
     same(rotate(reflected_u,reflected_normal,pi/2),reflected_v,"reflected direction rotation");
+    require(normal_orientation({0,1,0},{0,0,1},{1,0,0})==1,"positive sagittal normal");
+    require(normal_orientation({1,0,0},{0,0,1},{0,1,0})==-1,"positive coronal normal");
+    require(normal_orientation({1,0,0},{0,1,0},{0,0,1})==1,"positive axial normal");
+    require(normal_orientation({0,1,0},{0,0,1},{-1,0,0})==-1,"reflected normal sign");
+    require(anatomical_direction({1,0,0})=="L", "LPS left");
+    require(anatomical_direction({-1,-0.5,0})=="RA", "LPS oblique orientation");
+    require(anatomical_direction({0,0,-1})=="I", "LPS inferior");
+    require(close(planar_distance(0,0,3,4,2,3),std::sqrt(180.0)),"anisotropic measurement");
     const Vector3 pivot={32.0,45.0,-9.0};
     const Vector3 center=output_center(pivot,u,v,13,87,256,128,0.7,5.0);
     same(pixel_position(center,u,v,13,87,256,128,0.7,5.0),pivot,"pivot preservation");
@@ -52,6 +61,9 @@ int main() {
     require(reference_line(planes.planes[2],planes.planes[1],line),"rotated plane reference");
     require(close(line.u,0) && close(line.v,0),"reference goes through shared pivot");
     require(!planes.rotate_target(2,2,pi/4),"reject rotating current plane around itself");
+    PlaneSet invalid=planes;
+    invalid.planes[2].u.x=std::numeric_limits<double>::quiet_NaN();
+    require(!invalid.rotate_target(2,1,0.5),"reject non-finite basis");
     planes.set_pivot({9,-2,5});
     require(reference_line(planes.planes[0],planes.planes[1],line),"reference after navigation");
     require(close(line.u,0) && close(line.v,0),"navigation preserves shared intersection");

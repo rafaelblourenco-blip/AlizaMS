@@ -27,7 +27,7 @@ StudyGraphicsView::StudyGraphicsView(StudyGraphicsWidget * p)
 	const QRectF rectf(0, 0, 100, 100);
 	scene_->setSceneRect(rectf);
 	setScene(scene_);
-	QColor bc = qApp->palette().color(QPalette::Window);
+	QColor bc(Qt::black);
 	setBackgroundBrush(QBrush(bc));
 	shutter_color = std::move(bc);
 	//setCacheMode(CacheNone);
@@ -733,7 +733,7 @@ void StudyGraphicsView::set_win_last_position(int x, int y)
 
 void StudyGraphicsView::update_background_color()
 {
-	QColor bc = qApp->palette().color(QPalette::Window);
+	QColor bc(Qt::black);
 	setBackgroundBrush(QBrush(bc));
 	shutter_color = std::move(bc);
 }

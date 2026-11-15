@@ -203,6 +203,11 @@ void RadiantShortcutsManager::create_radiant_toolbar(QToolBar * parentToolbar)
     addGridAction(2, 4);
     addGridAction(5, 4);
     addGridAction(5, 5);
+    if (mw->studyview) {
+        QMenu * studyMenu = mw->studyview->create_toolbar_menu(gridMenu);
+        studyMenu->setTitle(QString("Ferramentas do estudo"));
+        gridMenu->addMenu(studyMenu);
+    }
     createMenuButton(action_grid, gridMenu, true);
 
     // 6. Ícone de Letra ("A")
@@ -360,9 +365,25 @@ void RadiantShortcutsManager::create_radiant_toolbar(QToolBar * parentToolbar)
     radiant_toolbar->addSeparator();
 
     // 15. MPR (Multiplanar)
-    action_mpr = new QAction(QIcon(":/bitmaps/radiant_mpr.svg"), QString("MPR - Reformatação Multiplanar"), this);
+    action_mpr = new QAction(QIcon(":/bitmaps/radiant_mpr.svg"), QString("MPR (F2)"), this);
     connect(action_mpr, SIGNAL(triggered()), this, SLOT(trigger_mpr_window()));
-    radiant_toolbar->addAction(action_mpr);
+    QMenu * mprMenu = new QMenu(radiant_toolbar);
+    QAction * oblique = mprMenu->addAction(QString("MPR oblíquo (indisponível)"));
+    oblique->setEnabled(false);
+    mprMenu->addSeparator();
+    auto addPlane = [this, mprMenu](const QString & label, QAction * plane, int key) {
+        QAction * item = mprMenu->addAction(label);
+        item->setShortcut(QKeySequence(Qt::CTRL + Qt::ALT + key));
+        item->setShortcutContext(Qt::WindowShortcut);
+        mw->addAction(item);
+        connect(item, &QAction::triggered, [plane]() { if (plane) plane->setChecked(true); });
+    };
+    addPlane(QString("Coronal"), mw->graphicsAct_Y, Qt::Key_1);
+    addPlane(QString("Sagital"), mw->graphicsAct_X, Qt::Key_2);
+    addPlane(QString("Axial"), mw->graphicsAct_Z, Qt::Key_3);
+    createMenuButton(action_mpr, mprMenu, false);
+    setup_shortcut(QKeySequence(Qt::Key_F2), SLOT(trigger_mpr_window()), false);
+    radiant_toolbar->addAction(mw->histogramAct);
 
     // 16. Renderização 3D (Volume Rendering) - Carregamento sob demanda
     action_3d_vr = new QAction(QIcon(":/bitmaps/radiant_3d.svg"), QString("Renderização 3D - Volume Rendering (F3)"), this);

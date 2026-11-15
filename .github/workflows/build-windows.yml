@@ -170,22 +170,40 @@ jobs:
     - name: Package Artifacts
       shell: pwsh
       run: |
-        New-Item -ItemType Directory -Path package -Force | Out-Null
-        $exeFile = Get-ChildItem -Path build -Filter "*aliza*.exe" -Recurse | Select-Object -First 1
-        if (-not $exeFile) {
-            Write-Error "Executavel aliza*.exe nao encontrado apos compilacao!"
-            exit 1
-        }
+        # Use an empty staging directory outside the checkout. The repository's
+        # package/ directory contains source assets for other platforms.
+        $distDir = Join-Path $env:RUNNER_TEMP "aliza-dist-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+        if (Test-Path -LiteralPath $distDir) { throw "Diretorio de distribuicao ja existe: $distDir" }
+        New-Item -ItemType Directory -Path $distDir | Out-Null
+        $exeFiles = @(Get-ChildItem -Path build -Filter "alizams.exe" -Recurse -File)
+        if ($exeFiles.Count -ne 1) { throw "Esperado um alizams.exe compilado; encontrados: $($exeFiles.Count)" }
+        $exeFile = $exeFiles[0]
         Write-Output ">> Encontrado executavel em: $($exeFile.FullName)"
-        Copy-Item $exeFile.FullName -Destination package/aliza.exe
-        Copy-Item $exeFile.FullName -Destination package/alizams.exe
-        if (Test-Path "GUI/dark_radiant.qss") {
-            Copy-Item "GUI/dark_radiant.qss" -Destination package/
-        }
-        windeployqt package/aliza.exe --no-translations --compiler-runtime
+        Copy-Item -LiteralPath $exeFile.FullName -Destination (Join-Path $distDir "aliza.exe")
+        Copy-Item -LiteralPath $exeFile.FullName -Destination (Join-Path $distDir "alizams.exe")
+        if (-not (Test-Path -LiteralPath "GUI/dark_radiant.qss" -PathType Leaf)) { throw "Estilo dark_radiant.qss nao encontrado" }
+        Copy-Item -LiteralPath "GUI/dark_radiant.qss" -Destination $distDir
+        windeployqt (Join-Path $distDir "aliza.exe") --no-translations --compiler-runtime
         if ($LASTEXITCODE -ne 0) { throw "windeployqt falhou (codigo $LASTEXITCODE)" }
-        7z a aliza-radiant-windows-x64.zip ./package/*
-        if ($LASTEXITCODE -ne 0) { throw "Empacotamento falhou (codigo $LASTEXITCODE)" }
+        foreach ($required in @("aliza.exe", "alizams.exe", "dark_radiant.qss", "Qt5Core.dll", "platforms/qwindows.dll")) {
+            if (-not (Test-Path -LiteralPath (Join-Path $distDir $required) -PathType Leaf)) {
+                throw "Arquivo obrigatorio ausente na distribuicao: $required"
+            }
+        }
+        Write-Output ">> Arquivos incluidos na distribuicao:"
+        Get-ChildItem -LiteralPath $distDir -Recurse -File | ForEach-Object {
+            Write-Output $_.FullName.Substring($distDir.Length + 1)
+        }
+        $zipPath = Join-Path $env:GITHUB_WORKSPACE "aliza-radiant-windows-x64.zip"
+        if (Test-Path -LiteralPath $zipPath) { throw "Arquivo de destino ja existe: $zipPath" }
+        Push-Location -LiteralPath $distDir
+        try {
+            7z a -tzip "$zipPath" '*'
+            if ($LASTEXITCODE -ne 0) { throw "Empacotamento falhou (codigo $LASTEXITCODE)" }
+        }
+        finally { Pop-Location }
+        7z t "$zipPath"
+        if ($LASTEXITCODE -ne 0) { throw "Verificacao do ZIP falhou (codigo $LASTEXITCODE)" }
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4

@@ -1,3 +1,4 @@
+#include "mprstate.h"
 #include "mainwindow.h"
 #include <QApplication>
 #include <QSettings>
@@ -264,6 +265,11 @@ MainWindow::MainWindow(
 	l8->addWidget(graphicswidget_x);
 	graphicswidget_x->set_sliderwidget(slider_x);
 	graphicswidget_x->set_toolbox2D_widget(toolbox2D);
+	// One state for all three MPR views; interactive oblique mode stays gated.
+	const std::shared_ptr<MprSharedState> mprState = std::make_shared<MprSharedState>();
+	graphicswidget_m->set_mpr_state(mprState);
+	graphicswidget_y->set_mpr_state(mprState);
+	graphicswidget_x->set_mpr_state(mprState);
 	//
 	if (graphicswidget_m->graphicsview)
 	{

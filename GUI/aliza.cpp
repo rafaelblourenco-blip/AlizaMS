@@ -2168,6 +2168,46 @@ bool Aliza::check_3d()
 	return false;
 }
 
+// A volume can be loaded before the OpenGL widget is first shown. In that
+// case the DICOM loader intentionally skipped the GPU texture. Build it on
+// demand after the context has been initialized, without re-reading the study.
+bool Aliza::prepare_selected_volume_3d()
+{
+	ImageVariant * v = get_selected_image();
+	if (!check_3d() || !v || !v->di) return false;
+	if (!v->di->opengl_ok)
+	{
+		// Only ordinary monochrome CT/MR volumes are enabled here. Segmentation,
+		// tomosynthesis and other objects retain the loader's exclusions.
+		const bool supported_sop =
+			v->sop == QString("1.2.840.10008.5.1.4.1.1.2") ||
+			v->sop == QString("1.2.840.10008.5.1.4.1.1.2.1") ||
+			v->sop == QString("1.2.840.10008.5.1.4.1.1.2.2") ||
+			v->sop == QString("1.2.840.10008.5.1.4.1.1.4") ||
+			v->sop == QString("1.2.840.10008.5.1.4.1.1.4.1") ||
+			v->sop == QString("1.2.840.10008.5.1.4.1.1.4.4");
+		if (!supported_sop ||
+			v->image_type < 0 || v->image_type >= 10 ||
+			!v->equi || v->di->idimz < 2)
+			return false;
+		const bool previous_skip_texture = v->di->skip_texture;
+		GLWidget * previous_gl = v->di->gl;
+		v->di->opengl_ok = true;
+		v->di->skip_texture = false;
+		v->di->set_glwidget(glwidget);
+		const bool loaded = load_3d(v, false, true, true, true);
+		if (!loaded || !v->di->image_3dtex || v->di->skip_texture)
+		{
+			if (v->di->image_3dtex) v->di->close(false);
+			v->di->opengl_ok = false;
+			v->di->skip_texture = previous_skip_texture;
+			v->di->set_glwidget(previous_gl);
+			return false;
+		}
+	}
+	return v->di->image_3dtex != 0 && !v->di->skip_texture;
+}
+
 bool Aliza::check_3d_visible()
 {
 	if (show3DAct && show3DAct->isChecked())
@@ -2759,6 +2799,10 @@ void Aliza::update_selection_common2(QListWidgetItem * s)
 	ImageVariant * v = k->get_image_from_item();
 	if (v)
 	{
+		// A different series may have been loaded before the 3D context existed.
+		// load_3d does not modify selection, avoiding recursive selection signals.
+		if (ok3d && check_3d_visible() && !v->di->opengl_ok)
+			prepare_selected_volume_3d();
 		selected_images.push_back(v);
 		if (v->image_type == 300) spect_images.push_back(v);
 		else tmp_images.push_back(k->get_image_from_item_const());

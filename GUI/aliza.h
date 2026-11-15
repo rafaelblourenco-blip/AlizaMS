@@ -112,6 +112,7 @@ public:
 	void toggle_rect(bool);
 	bool check_3d();
 	bool check_3d_visible();
+	bool prepare_selected_volume_3d();
 	bool check_2d_visible();
 	void set_view2d_mouse_modus(short);
 	void set_show_frames_3d(bool);

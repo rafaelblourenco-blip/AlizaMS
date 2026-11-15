@@ -340,6 +340,11 @@ int main(int argc, char * argv[])
 	if (!force_disable_opengl)
 	{
 		QApplication::setAttribute(Qt::AA_UseDesktopOpenGL);
+#if QT_VERSION >= QT_VERSION_CHECK(5,4,0)
+		// Keep QOpenGLWidget resources valid when the 3D view moves to its
+		// own top-level window.
+		QApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
+#endif
 #ifdef USE_SET_DEFAULT_GL_FORMAT
 		QSurfaceFormat format;
 		format.setRenderableType(QSurfaceFormat::OpenGL);

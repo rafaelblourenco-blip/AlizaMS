@@ -20,6 +20,8 @@ StudyGraphicsView::StudyGraphicsView(StudyGraphicsWidget * p)
 	setAcceptDrops(false);
 	setFrameStyle(QFrame::Plain);
 	setFrameShape(QFrame::NoFrame);
+	setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+	setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 	QGraphicsScene * scene_ = new QGraphicsScene(this);
 	scene_->setItemIndexMethod(QGraphicsScene::NoIndex);
 	const QRectF rectf(0, 0, 100, 100);

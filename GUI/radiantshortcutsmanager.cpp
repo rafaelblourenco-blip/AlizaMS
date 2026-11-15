@@ -224,16 +224,13 @@ void RadiantShortcutsManager::create_radiant_toolbar(QToolBar * parentToolbar)
     // 7. Funções dos botões do mouse & ordenação
     action_mouse_config = new QAction(QIcon(":/bitmaps/radiant_mouse.svg"), QString("Funções do Mouse e Ordenação"), this);
     QMenu * mouseMenu = new QMenu(radiant_toolbar);
-    mouseMenu->addAction(QString("Botão Esquerdo: Ação da Ferramenta Ativa"));
-    mouseMenu->addAction(QString("Botão do Meio (Scroll): Janelamento WL / WW"));
-    mouseMenu->addAction(QString("Botão Direito: Zoom Contínuo"));
-    mouseMenu->addAction(QString("Roda do Mouse: Navegar Fatias"));
+    mouseMenu->addAction(QString("Botão Esquerdo: Ação da Ferramenta Ativa"))->setEnabled(false);
+    mouseMenu->addAction(QString("Botão do Meio (Scroll): Janelamento WL / WW"))->setEnabled(false);
+    mouseMenu->addAction(QString("Botão Direito: Zoom Contínuo"))->setEnabled(false);
+    mouseMenu->addAction(QString("Roda do Mouse: Navegar Fatias"))->setEnabled(false);
     mouseMenu->addSeparator();
-    QMenu * sortMenu = mouseMenu->addMenu(QString("Ordenação das Imagens"));
-    sortMenu->addAction(QString("Número da Instância (Instance Number)"))->setCheckable(true);
-    sortMenu->addAction(QString("Posição Espacial (Spatial Position)"))->setChecked(true);
-    sortMenu->addAction(QString("Horário de Aquisição (Acquisition Time)"));
-    sortMenu->addAction(QString("Nome do Arquivo (File Name)"));
+    QMenu * sortMenu = mouseMenu->addMenu(QString("Ordenação das Imagens - indisponível"));
+    sortMenu->setEnabled(false);
     createMenuButton(action_mouse_config, mouseMenu, true);
 
     radiant_toolbar->addSeparator();
@@ -377,12 +374,10 @@ void RadiantShortcutsManager::create_radiant_toolbar(QToolBar * parentToolbar)
     // 17. Metadados DICOM
     action_dicom_meta = new QAction(QIcon(":/bitmaps/meta.svg"), QString("Metadados DICOM"), this);
     connect(action_dicom_meta, SIGNAL(triggered()), this, SLOT(trigger_dicom_metadata()));
-    radiant_toolbar->addAction(action_dicom_meta);
 
     // 18. Ajuda
     action_help = new QAction(QIcon(":/bitmaps/radiant_help.svg"), QString("Ajuda e Guia do Usuário"), this);
     connect(action_help, SIGNAL(triggered()), this, SLOT(trigger_help_dialog()));
-    radiant_toolbar->addAction(action_help);
 
     // 19. Configuração
     action_config = new QAction(QIcon(":/bitmaps/radiant_config.svg"), QString("Configurações do Sistema"), this);
@@ -390,6 +385,9 @@ void RadiantShortcutsManager::create_radiant_toolbar(QToolBar * parentToolbar)
     QMenu * configMenu = new QMenu(radiant_toolbar);
     configMenu->addAction(QString("Configurações Gerais..."), this, SLOT(trigger_config_dialog()));
     configMenu->addAction(QString("Configurações Avançadas do Sistema..."), this, SLOT(trigger_settings_tab()));
+    configMenu->addSeparator();
+    configMenu->addAction(action_dicom_meta);
+    configMenu->addAction(action_help);
     createMenuButton(action_config, configMenu, false);
 
     // Default active tool: Browse
@@ -982,35 +980,59 @@ void RadiantShortcutsManager::on_mpr_window_closed()
 
 void RadiantShortcutsManager::trigger_3d_vr_window()
 {
-    if (!mw) return;
-
+    if (!mw || !mw->aliza) return;
+    if (!mw->glwidget)
+    {
+        QMessageBox::warning(mw, QString("Visualização 3D"),
+            QString("A visualização 3D não está disponível nesta configuração de OpenGL."));
+        return;
+    }
+    if (!mw->aliza->get_selected_image())
+    {
+        QMessageBox::information(mw, QString("Visualização 3D"),
+            QString("Selecione uma série volumétrica antes de abrir a visualização 3D."));
+        return;
+    }
     if (!vr_3d_window)
     {
         vr_3d_window = new RadiantOverlayWindow(
-            QString("Renderização 3D - Reconstrução Tridimensional (GPU)"),
-            mw->gl_frame, mw, RadiantOverlayWindow::OverlayType::VR_3D);
+            QString("Reconstrução 3D"), mw->gl_frame, mw,
+            RadiantOverlayWindow::OverlayType::VR_3D);
         connect(vr_3d_window, SIGNAL(window_closed()), this, SLOT(on_3d_window_closed()));
     }
-
     if (vr_3d_window->isVisible())
     {
         vr_3d_window->hide();
+        on_3d_window_closed();
+        return;
     }
-    else
+    // Showing the widget creates its OpenGL context before allocating textures.
+    vr_3d_window->show();
+    qApp->processEvents();
+    if (!mw->aliza->prepare_selected_volume_3d())
     {
-        // Lazy load: Show 3D and initialize volume rendering
-        mw->toggle_showgl(true);
-        vr_3d_window->show();
-        vr_3d_window->raise();
-        vr_3d_window->activateWindow();
+        vr_3d_window->hide();
+        QMessageBox::warning(mw, QString("Visualização 3D"),
+            QString("Não foi possível criar o volume 3D desta série. Verifique se é uma série volumétrica compatível e se o OpenGL está disponível."));
+        return;
     }
+    mw->show3DAct->blockSignals(true);
+    mw->show3DAct->setChecked(true);
+    mw->show3DAct->blockSignals(false);
+    mw->aliza->update_selection();
+    mw->raycastAct->setChecked(true);
+    mw->set_view_rc(true);
+    vr_3d_window->raise();
+    vr_3d_window->activateWindow();
 }
 
 void RadiantShortcutsManager::on_3d_window_closed()
 {
-    if (mw)
+    if (mw && mw->show3DAct)
     {
-        mw->toggle_showgl(false);
+        mw->show3DAct->blockSignals(true);
+        mw->show3DAct->setChecked(false);
+        mw->show3DAct->blockSignals(false);
     }
 }
 

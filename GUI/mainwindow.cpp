@@ -104,6 +104,9 @@ MainWindow::MainWindow(
 	view3d_frame->hide();
 	annotations_frame->hide();
 	info_line->hide();
+	info_lineZ->hide();
+	info_lineY->hide();
+	info_lineX->hide();
 	view2d_label = new QLabel(this);
 	view3d_label = new QLabel(this);
 	//
@@ -188,6 +191,16 @@ MainWindow::MainWindow(
 	frame2D_viewerZ_layout->setSpacing(0);
 	frame2D_viewerZ_layout->setContentsMargins(0, 0, 0, 0);
 	//
+	// Keep the slice controls beside each image in both single and MPR layouts.
+	horizontalLayout_4->addWidget(slider_frame);
+	horizontalLayout_5->addWidget(slider_frameZ);
+	horizontalLayout_6->addWidget(slider_frameY);
+	horizontalLayout_7->addWidget(slider_frameX);
+	for (QFrame * frame : {slider_frame, slider_frameZ, slider_frameY, slider_frameX})
+	{
+		frame->setFixedWidth(14);
+		frame->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+	}
 	slider_m  = new SliderWidget();
 	slider_frame_layout = new QVBoxLayout(slider_frame);
 	slider_frame_layout->setSpacing(0);
@@ -1243,7 +1256,7 @@ void MainWindow::toggle_showgl(bool t)
 		else
 		{
 			level_frame->hide();
-			zrange_frame->show();
+			zrange_frame->setVisible(!frame3D->isHidden());
 		}
 	}
 	qApp->processEvents();
@@ -1261,7 +1274,7 @@ void MainWindow::toggle_show2D(bool t)
 	else
 	{
 		level_frame->hide();
-		zrange_frame->show();
+		zrange_frame->setVisible(!frame3D->isHidden());
 	}
 	if (first_image_loaded)
 	{
@@ -1273,7 +1286,7 @@ void MainWindow::toggle_show2D(bool t)
 		else
 		{
 			level_frame->hide();
-			zrange_frame->show();
+			zrange_frame->setVisible(!frame3D->isHidden());
 		}
 	}
 	qApp->processEvents();
@@ -1838,7 +1851,7 @@ void MainWindow::set_ui()
 		imagesbox_frame1->show();
 		slider_frame->show();
 		view2d_frame->show();
-		info_line->show();
+		info_line->hide();
 		view2d_label->setText("Slice view (Z)");
 		actionViews2DMenu->setEnabled(true);
 		if (glwidget && !glwidget->no_opengl3)

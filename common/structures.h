@@ -509,7 +509,7 @@ public:
 	~DisplayInterface() = default;
 	void set_glwidget(GLWidget*);
 	const int id;
-	const bool opengl_ok;
+	bool opengl_ok;
 	bool skip_texture;
 	GLWidget * gl;
 	short selected_lut;

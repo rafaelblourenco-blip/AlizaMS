@@ -1521,6 +1521,7 @@ void StudyGraphicsWidget::update_image(
 
 void StudyGraphicsWidget::clear_()
 {
+    if (studyview) studyview->invalidate_reference_lines();
 	if (graphicsview->image_item)
 	{
 #ifdef DELETE_STUDYGRAPHICSIMAGEITEM
@@ -1687,6 +1688,7 @@ void StudyGraphicsWidget::set_image(
 	const short fit,
 	const bool /* always draw US regions */)
 {
+    if (studyview) studyview->invalidate_reference_lines();
 	if (graphicsview->image_item)
 	{
 #ifdef DELETE_STUDYGRAPHICSIMAGEITEM

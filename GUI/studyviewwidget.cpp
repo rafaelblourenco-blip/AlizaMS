@@ -215,8 +215,18 @@ void StudyViewWidget::init_(Aliza * a)
 	connect_tools();
 }
 
+void StudyViewWidget::invalidate_reference_lines()
+{
+    const auto next = property("referenceGeneration").toULongLong() + 1;
+    setProperty("referenceGeneration", QVariant::fromValue<qulonglong>(next));
+    for (StudyFrameWidget *frame : widgets)
+        if (frame && frame->graphicswidget && frame->graphicswidget->graphicsview)
+            frame->graphicswidget->graphicsview->clear_collision_paths();
+}
+
 void StudyViewWidget::clear_()
 {
+    invalidate_reference_lines();
 	active_id = -1;
 	saved_r = -1;
 	saved_c = -1;
@@ -467,6 +477,7 @@ void StudyViewWidget::closeEvent(QCloseEvent * e)
 
 void StudyViewWidget::update_grid(int r, int c)
 {
+    invalidate_reference_lines();
 	for (int x = 0; x < widgets.size(); ++x)
 	{
 		if (widgets.at(x))
@@ -525,6 +536,7 @@ void StudyViewWidget::update_grid(int r, int c)
 		}
 	}
 	qApp->processEvents();
+    update_scouts();
 }
 
 void StudyViewWidget::update_grid2()
@@ -1108,6 +1120,7 @@ void StudyViewWidget::update_all_sliders(int wid, int x, int dimz)
 
 void StudyViewWidget::set_single(int wid)
 {
+    invalidate_reference_lines();
 	QGridLayout * layout = static_cast<QGridLayout*>(scrollAreaWidgetContents->layout());
 	if (!layout)
 	{

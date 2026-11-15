@@ -28,6 +28,7 @@ public:
 	~StudyViewWidget();
 	void init_(Aliza*);
 	void clear_();
+	void invalidate_reference_lines();
 	bool get_in_tab() const;
 	void calculate_grid(int);
 	int  get_active_id() const;

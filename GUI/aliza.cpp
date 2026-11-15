@@ -375,18 +375,22 @@ void check_slice_collisions(const ImageVariant * v, GraphicsWidget * w)
 }
 
 namespace {
+struct ReferenceSeries {
+    std::vector<std::array<mpr_geometry::Vector3,4>> corners;
+    QColor color;
+};
 struct ReferenceJob {
     QPointer<StudyGraphicsView> view;
     mpr_geometry::PlaneRectangle target;
-    std::array<mpr_geometry::Vector3,4> source_corners;
+    std::shared_ptr<ReferenceSeries> source;
     ImageTypeUC::Pointer physical_image;
-    QColor color;
 };
 struct ReferenceJobs {
     QPointer<StudyViewWidget> owner;
     unsigned long long generation;
     std::vector<ReferenceJob> jobs;
     std::size_t next = 0;
+    std::size_t next_slice = 0;
 };
 static bool slice_rectangle(const ImageSlice *slice, mpr_geometry::PlaneRectangle &rect)
 {
@@ -398,12 +402,17 @@ static bool slice_rectangle(const ImageSlice *slice, mpr_geometry::PlaneRectangl
 static void process_reference_jobs(const std::shared_ptr<ReferenceJobs> &state)
 {
     if (!state->owner || state->generation != state->owner->property("referenceGeneration").toULongLong()) return;
-    const std::size_t end = (std::min)(state->next + std::size_t(48),state->jobs.size());
-    for (; state->next < end; ++state->next) {
+    std::size_t budget=48;
+    while (budget && state->next < state->jobs.size()) {
         const ReferenceJob &job=state->jobs[state->next];
+        if (state->next_slice >= job.source->corners.size()) {
+            ++state->next; state->next_slice=0; continue;
+        }
+        const auto &saved=job.source->corners[state->next_slice++];
+        --budget;
         if (!job.view || !job.view->isVisible() || !job.physical_image) continue;
         mpr_geometry::Vector3 corners[4];
-        for (int i=0; i<4; ++i) corners[i]=job.source_corners[i];
+        for (int i=0; i<4; ++i) corners[i]=saved[i];
         mpr_geometry::PlaneRectangle source;
         mpr_geometry::ReferenceSegment segment;
         if (!mpr_geometry::rectangle_from_corners(corners,source) ||
@@ -420,7 +429,7 @@ static void process_reference_jobs(const std::shared_ptr<ReferenceJobs> &state)
         job.physical_image->TransformPhysicalPointToContinuousIndex(b,ib);
 #endif
         QPainterPath path; path.moveTo(ia[0],ia[1]); path.lineTo(ib[0],ib[1]);
-        QPen pen(job.color); pen.setCosmetic(true);
+        QPen pen(job.source->color); pen.setCosmetic(true);
         QGraphicsPathItem *item=new QGraphicsPathItem(path);
         item->setPen(pen); job.view->scene()->addItem(item); job.view->collision_paths.push_back(item);
     }
@@ -450,6 +459,7 @@ void check_slice_collisions2(StudyViewWidget * w)
 	if (reference_mode != 0) {
         auto state=std::make_shared<ReferenceJobs>();
         state->owner=w; state->generation=generation;
+        QMap<int, std::shared_ptr<ReferenceSeries>> snapshots;
         for (int x=0; x<widgets_size; ++x) {
             auto frame=w->widgets.at(x);
             if (!frame || !frame->isVisible() || !frame->graphicswidget) continue;
@@ -468,16 +478,24 @@ void check_slice_collisions2(StudyViewWidget * w)
                 if (!source || !source->di || source->id==target->id || source->study_uid!=target->study_uid || source->frame_of_ref_uid!=target->frame_of_ref_uid) continue;
                 const int count=static_cast<int>(source->di->image_slices.size());
                 if (count<=0 || source->di->idimz!=count) continue;
-                for (int k=0;k<count;++k) {
-                    if (reference_mode==1 && k!=0 && k!=count-1) continue;
-                    const ImageSlice *slice=source->di->image_slices.at(k);
-                    if (!slice) continue;
-                    ReferenceJob job; job.view=frame->graphicswidget->graphicsview;
-                    job.target=targetRect; job.physical_image=physical;
-                    for (int i=0;i<4;++i) job.source_corners[i]={slice->fv[3*i],slice->fv[3*i+1],slice->fv[3*i+2]};
-                    job.color=QColor(static_cast<int>(source->di->R*255),static_cast<int>(source->di->G*255),static_cast<int>(source->di->B*255));
-                    state->jobs.push_back(job);
+                auto snapshot=snapshots.value(source->id);
+                if (!snapshot) {
+                    snapshot=std::make_shared<ReferenceSeries>();
+                    snapshot->color=QColor(static_cast<int>(source->di->R*255),static_cast<int>(source->di->G*255),static_cast<int>(source->di->B*255));
+                    snapshot->corners.reserve(reference_mode==1 ? 2 : count);
+                    for (int k=0;k<count;++k) {
+                        if (reference_mode==1 && k!=0 && k!=count-1) continue;
+                        const ImageSlice *slice=source->di->image_slices.at(k);
+                        if (!slice) continue;
+                        std::array<mpr_geometry::Vector3,4> corners;
+                        for (int i=0;i<4;++i) corners[i]={slice->fv[3*i],slice->fv[3*i+1],slice->fv[3*i+2]};
+                        snapshot->corners.push_back(corners);
+                    }
+                    snapshots.insert(source->id,snapshot);
                 }
+                ReferenceJob job; job.view=frame->graphicswidget->graphicsview;
+                job.target=targetRect; job.physical_image=physical; job.source=snapshot;
+                state->jobs.push_back(job);
             }
         }
         process_reference_jobs(state);

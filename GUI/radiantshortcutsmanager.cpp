@@ -43,6 +43,10 @@ RadiantShortcutsManager::RadiantShortcutsManager(MainWindow * mainWindow, QObjec
 {
     connect(RadiantInputDispatcher::instance(), SIGNAL(tool_changed(RadiantTool)),
             this, SLOT(on_dispatcher_tool_changed(RadiantTool)));
+    if (mw && mw->imagesbox && mw->imagesbox->listWidget)
+        connect(mw->imagesbox->listWidget, &QListWidget::itemSelectionChanged, this, [this]() {
+            if (cine_timer && cine_timer->isActive()) toggle_cine();
+        });
 }
 
 void RadiantShortcutsManager::setup_shortcut(const QKeySequence & seq, const char * slot, bool autoRepeat)
@@ -167,7 +171,15 @@ void RadiantShortcutsManager::create_radiant_toolbar(QToolBar * parentToolbar)
     // 1. Abrir exame da pasta
     action_open_dir = new QAction(QIcon(":/bitmaps/radiant_open_folder.svg"), QString("Abrir pasta DICOM (Ctrl+Shift+O)"), this);
     connect(action_open_dir, SIGNAL(triggered()), this, SLOT(trigger_open_dir()));
-    radiant_toolbar->addAction(action_open_dir);
+    QMenu * studiesMenu = new QMenu(radiant_toolbar);
+    studiesMenu->addAction(mw->imagesbox->actionStudy);
+    studiesMenu->addAction(mw->imagesbox->actionStudyEmpty);
+    studiesMenu->addAction(mw->imagesbox->actionStudyChecked);
+    studiesMenu->addSeparator();
+    studiesMenu->addAction(mw->imagesbox->actionClear);
+    studiesMenu->addAction(mw->imagesbox->actionClearAll);
+    createMenuButton(action_open_dir, studiesMenu, false);
+    mw->imagesbox->toolbar_frame->hide();
 
     // 2. Abrir exame do CD / DVD
     action_open_cd = new QAction(QIcon(":/bitmaps/radiant_open_cd.svg"), QString("Abrir exame de CD/DVD"), this);
@@ -381,6 +393,8 @@ void RadiantShortcutsManager::create_radiant_toolbar(QToolBar * parentToolbar)
     addPlane(QString("Coronal"), mw->graphicsAct_Y, Qt::Key_1);
     addPlane(QString("Sagital"), mw->graphicsAct_X, Qt::Key_2);
     addPlane(QString("Axial"), mw->graphicsAct_Z, Qt::Key_3);
+    mprMenu->addSeparator();
+    mprMenu->addAction(mw->zyxAct);
     createMenuButton(action_mpr, mprMenu, false);
     setup_shortcut(QKeySequence(Qt::Key_F2), SLOT(trigger_mpr_window()), false);
     radiant_toolbar->addAction(mw->histogramAct);
@@ -820,32 +834,20 @@ void RadiantShortcutsManager::prev_panel()
 
 void RadiantShortcutsManager::toggle_cine()
 {
-    if (cine_timer_id != 0)
-    {
-        mw->killTimer(cine_timer_id);
-        cine_timer_id = 0;
-        if (action_cine) action_cine->setChecked(false);
+    if (!cine_timer) {
+        cine_timer = new QTimer(this);
+        connect(cine_timer, &QTimer::timeout, this, &RadiantShortcutsManager::next_image);
     }
-    else
-    {
-        if (action_cine) action_cine->setChecked(true);
-        const int intervalMs = 1000 / current_fps;
-        QTimer * timer = new QTimer(this);
-        connect(timer, &QTimer::timeout, [this, timer]() {
-            if (!this->action_cine || !this->action_cine->isChecked()) {
-                timer->stop();
-                timer->deleteLater();
-                return;
-            }
-            this->next_image();
-        });
-        timer->start(intervalMs);
-    }
+    if (cine_timer->isActive()) cine_timer->stop();
+    else cine_timer->start(qMax(1, 1000 / current_fps));
+    if (action_cine) action_cine->setChecked(cine_timer->isActive());
 }
 
 void RadiantShortcutsManager::set_cine_fps(int fps)
 {
+    if (fps <= 0) return;
     current_fps = fps;
+    if (cine_timer && cine_timer->isActive()) cine_timer->setInterval(qMax(1, 1000 / fps));
 }
 
 // Zoom & Pan
@@ -942,7 +944,7 @@ void RadiantShortcutsManager::clear_geometric_transforms()
 {
     if (mw && mw->graphicswidget_m && mw->graphicswidget_m->graphicsview)
     {
-        mw->graphicswidget_m->graphicsview->resetTransform();
+        mw->graphicswidget_m->graphicsview->reset_transformations();
         mw->graphicswidget_m->graphicsview->reset_zoom();
     }
 }
@@ -984,6 +986,7 @@ void RadiantShortcutsManager::toggle_series_sync()
 // MPR & 3D Overlaid Windows
 void RadiantShortcutsManager::trigger_mpr_window()
 {
+    if (cine_timer && cine_timer->isActive()) toggle_cine();
     if (!mw) return;
 
     if (!mpr_window)

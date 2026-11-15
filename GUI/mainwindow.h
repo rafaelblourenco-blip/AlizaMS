@@ -75,6 +75,8 @@ public:
 	QAction * animAct2d;
 	QAction * animAct3d;
 	RadiantShortcutsManager * get_radiant_shortcuts_manager() const { return radiant_shortcuts_mgr; }
+	QAction * get_volume_roi_action() const { return rectAct; }
+	LUTWidget * get_lut_widget() const { return lutwidget2; }
 
 protected:
 	void closeEvent(QCloseEvent*) override;

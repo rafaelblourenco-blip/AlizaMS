@@ -1,4 +1,5 @@
 #include "../common/mprgeometry.h"
+#include "../common/mprlayout.h"
 #include <QTransform>
 #include <QPointF>
 #include <cmath>
@@ -8,6 +9,17 @@
 static void require(bool ok, const char *what) { if (!ok) { std::cerr << what << '\n'; std::exit(1); } }
 static bool approx_equal(double a, double b) { return std::abs(a-b)<1e-9; }
 int main() {
+    mpr_layout::State layout;
+    for (int i=0; i<3; ++i) require(layout.visible(i), "default MPR views visible");
+    layout.select(1);
+    require(layout.position(2).row==0 && layout.position(2).column==2,"horizontal MPR layout");
+    layout.double_click(1);
+    require(!layout.visible(0) && layout.visible(1) && !layout.visible(2),"maximize selected plane");
+    layout.double_click(1);
+    require(layout.visible(0) && layout.visible(2) && layout.grid==1,"restore prior layout");
+    layout.select(5);
+    layout.select(2);
+    require(layout.visible(0) && layout.visible(2) && layout.position(2).row==2,"layout choice exits maximization");
     using namespace mpr_geometry;
     const double pi=std::acos(-1.0);
     const QPointF pivot(125.25, 88.5), first(135.25,88.5), second(125.25,90.5);

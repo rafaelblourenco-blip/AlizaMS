@@ -2555,9 +2555,9 @@ void GraphicsView::draw_shutter(const ImageVariant * ivariant)
 
 void GraphicsView::reset_zoom()
 {
-	if (parent) parent->update_image(1, false);
 	m_scale = 1.0;
 	setTransform(QTransform());
+	if (parent) parent->update_image(1, false);
 	update_selection_rect_width();
 }
 

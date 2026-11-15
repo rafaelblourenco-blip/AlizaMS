@@ -750,6 +750,8 @@ template<typename T> void load_rgb_image(
 		&flip_x, &flip_y);
 	//
 	QTransform t = QTransform();
+	if (widget->graphicsview->rotation_angle != 0)
+		t.rotate(widget->graphicsview->rotation_angle);
 	if (spacing[1] != spacing[0]) t = t.scale(coeff_size_0, coeff_size_1);
 	t = t.scale(scale__, scale__);
 	if (flip_y && flip_x) t = t.scale(-1.0, -1.0);
@@ -757,8 +759,6 @@ template<typename T> void load_rgb_image(
 	else if (flip_x)      t = t.scale(-1.0,  1.0);
 	if (global_flip_x)    t = t.scale(-1.0,  1.0);
 	if (global_flip_y)    t = t.scale( 1.0, -1.0);
-	if (widget->graphicsview->rotation_angle != 0)
-		t.rotate(widget->graphicsview->rotation_angle);
 	//
 	const QRectF rectf(0, 0, size[0], size[1]);
 	widget->graphicsview->scene()->setSceneRect(rectf);
@@ -1186,6 +1186,8 @@ template<typename T> void load_rgb_char_image(
 		&flip_x, &flip_y);
 	//
 	QTransform t = QTransform();
+	if (widget->graphicsview->rotation_angle != 0)
+		t.rotate(widget->graphicsview->rotation_angle);
 	if (spacing[1] != spacing[0]) t = t.scale(coeff_size_0, coeff_size_1);
 	t = t.scale(scale__, scale__);
 	if (flip_y && flip_x) t = t.scale(-1.0, -1.0);
@@ -1193,8 +1195,6 @@ template<typename T> void load_rgb_char_image(
 	else if (flip_x)      t = t.scale(-1.0,  1.0);
 	if (global_flip_x)    t = t.scale(-1.0,  1.0);
 	if (global_flip_y)    t = t.scale( 1.0, -1.0);
-	if (widget->graphicsview->rotation_angle != 0)
-		t.rotate(widget->graphicsview->rotation_angle);
 	//
 	const QRectF rectf(0, 0, size[0], size[1]);
 	widget->graphicsview->scene()->setSceneRect(rectf);
@@ -1388,6 +1388,8 @@ template<typename T> void load_rgba_char_image(
 		&flip_x, &flip_y);
 	//
 	QTransform t = QTransform();
+	if (widget->graphicsview->rotation_angle != 0)
+		t.rotate(widget->graphicsview->rotation_angle);
 	if (spacing[1] != spacing[0]) t = t.scale(coeff_size_0, coeff_size_1);
 	t = t.scale(scale__, scale__);
 	if (flip_y && flip_x) t = t.scale(-1.0, -1.0);
@@ -1395,8 +1397,6 @@ template<typename T> void load_rgba_char_image(
 	else if (flip_x)      t = t.scale(-1.0,  1.0);
 	if (global_flip_x)    t = t.scale(-1.0,  1.0);
 	if (global_flip_y)    t = t.scale( 1.0, -1.0);
-	if (widget->graphicsview->rotation_angle != 0)
-		t.rotate(widget->graphicsview->rotation_angle);
 	//
 	const QRectF rectf(0, 0, size[0], size[1]);
 	widget->graphicsview->scene()->setSceneRect(rectf);
@@ -1697,6 +1697,8 @@ template<typename T> void load_image(
 	}
 	//
 	QTransform t = QTransform();
+	if (widget->graphicsview->rotation_angle != 0)
+		t.rotate(widget->graphicsview->rotation_angle);
 	if (spacing[1] != spacing[0]) t = t.scale(coeff_size_0, coeff_size_1);
 	t = t.scale(scale__, scale__);
 	//
@@ -1716,8 +1718,6 @@ template<typename T> void load_image(
 	else if (flip_x)      t = t.scale(-1.0,  1.0);
 	if (global_flip_x)    t = t.scale(-1.0,  1.0);
 	if (global_flip_y)    t = t.scale( 1.0, -1.0);
-	if (widget->graphicsview->rotation_angle != 0)
-		t.rotate(widget->graphicsview->rotation_angle);
 	//
 	if (widget->graphicsview->rotation_angle == 90)
 	{

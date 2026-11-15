@@ -10,6 +10,7 @@
 #include <QAction>
 #include <QActionGroup>
 #include <QMenu>
+#include "common/mprlayout.h"
 
 class MainWindow;
 
@@ -38,6 +39,7 @@ public:
 
 protected:
     void closeEvent(QCloseEvent * event) override;
+    bool eventFilter(QObject * watched, QEvent * event) override;
 
 signals:
     void window_closed();
@@ -68,6 +70,7 @@ public slots:
 private:
     void setup_toolbar();
     void setup_mpr_toolbar();
+    void apply_mpr_layout();
     void setup_3d_toolbar();
     QToolButton * create_menu_button(QAction * act, QMenu * menu, bool instantPopup = false);
 
@@ -76,6 +79,7 @@ private:
     QVBoxLayout  * main_layout{nullptr};
     QToolBar     * toolbar{nullptr};
     OverlayType    overlay_type{OverlayType::Generic};
+    mpr_layout::State mpr_layout_state;
     QActionGroup * tool_action_group{nullptr};
 
     // MPR Actions

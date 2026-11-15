@@ -27,13 +27,17 @@
 #include <QSettings>
 #include <QApplication>
 #include <QActionGroup>
+#include <QGridLayout>
+#include <QTimer>
+#include <QEvent>
+#include <QMessageBox>
 
 RadiantOverlayWindow::RadiantOverlayWindow(
     const QString & title,
     QWidget * contentWidget,
     MainWindow * parentWindow,
     OverlayType type)
-    : QWidget(parentWindow, Qt::Window | Qt::WindowMinMaxButtonsHint | Qt::WindowCloseButtonHint),
+    : QWidget(parentWindow, Qt::Window | Qt::WindowTitleHint | Qt::WindowSystemMenuHint | Qt::WindowMinMaxButtonsHint | Qt::WindowCloseButtonHint),
       mw(parentWindow), content(contentWidget), overlay_type(type)
 {
     setWindowTitle(title);
@@ -69,7 +73,32 @@ RadiantOverlayWindow::RadiantOverlayWindow(
     {
         main_layout->addWidget(content);
         content->show();
+        if (overlay_type == OverlayType::MPR)
+            for (GraphicsWidget * gw : content->findChildren<GraphicsWidget*>())
+                if (gw && gw->graphicsview) gw->graphicsview->viewport()->installEventFilter(this);
     }
+}
+
+bool RadiantOverlayWindow::eventFilter(QObject * watched, QEvent * event)
+{
+    if (overlay_type == OverlayType::MPR && event->type() == QEvent::MouseButtonDblClick && content)
+    {
+        for (GraphicsWidget * gw : content->findChildren<GraphicsWidget*>())
+        {
+            if (!gw || !gw->graphicsview || gw->graphicsview->viewport() != watched) continue;
+            QWidget * frame = gw;
+            while (frame && frame->parentWidget() != content) frame = frame->parentWidget();
+            if (!frame) break;
+            const char * const names[] = {"graphicswidget_frameZ", "graphicswidget_frameY", "graphicswidget_frameX"};
+            int plane = -1;
+            for (int i = 0; i < 3; ++i) if (frame == content->findChild<QWidget *>(names[i])) plane = i;
+            if (plane < 0) break;
+            mpr_layout_state.double_click(plane);
+            apply_mpr_layout();
+            return true;
+        }
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 RadiantOverlayWindow::~RadiantOverlayWindow()
@@ -217,17 +246,11 @@ void RadiantOverlayWindow::setup_mpr_toolbar()
 
     // 5. Slab MIP Thickness
     act_mpr_slab_mip = new QAction(QIcon(":/bitmaps/ray.svg"), QString("Modo Slab / MIP e Espessura"), this);
-    act_mpr_slab_mip->setToolTip(QString("Projecoes MIP, MinIP e Average ainda nao implementadas"));
+    act_mpr_slab_mip->setToolTip(QString("Modo de projeção e espessura do corte"));
     QMenu * slabMenu = new QMenu(toolbar);
     auto addSlabMode = [this, slabMenu](const QString & label, int mode, double thickness) {
-        QAction * a = slabMenu->addAction(mode == 0 ? label : label + QString(" - indisponivel"));
-        if (mode == 0)
-            connect(a, &QAction::triggered, [this, mode, thickness]() { on_mpr_slab_mip_thickness(mode, thickness); });
-        else
-        {
-            a->setEnabled(false);
-            a->setToolTip(QString("Projecao ainda nao implementada"));
-        }
+        QAction * a = slabMenu->addAction(label);
+        connect(a, &QAction::triggered, [this, mode, thickness]() { on_mpr_slab_mip_thickness(mode, thickness); });
     };
     addSlabMode(QString("Fatia Fina / Thin (1 voxel)"), 0, 0.0);
     slabMenu->addSeparator();
@@ -235,8 +258,13 @@ void RadiantOverlayWindow::setup_mpr_toolbar()
     addSlabMode(QString("Slab MIP (10 mm)"), 1, 10.0);
     addSlabMode(QString("Slab MIP (20 mm)"), 1, 20.0);
     slabMenu->addSeparator();
-    addSlabMode(QString("Slab MinIP (Mínima Intensidade)"), 2, 10.0);
-    addSlabMode(QString("Slab Média / Average"), 3, 10.0);
+    addSlabMode(QString("MinIP (5 mm)"), 2, 5.0);
+    addSlabMode(QString("MinIP (10 mm)"), 2, 10.0);
+    addSlabMode(QString("MinIP (20 mm)"), 2, 20.0);
+    slabMenu->addSeparator();
+    addSlabMode(QString("Média (5 mm)"), 3, 5.0);
+    addSlabMode(QString("Média (10 mm)"), 3, 10.0);
+    addSlabMode(QString("Média (20 mm)"), 3, 20.0);
     create_menu_button(act_mpr_slab_mip, slabMenu, true);
 
     // 6. Reset Planes (Reconstituição Ortogonal)
@@ -253,7 +281,7 @@ void RadiantOverlayWindow::setup_mpr_toolbar()
         QAction * a = layoutMenu->addAction(label);
         connect(a, &QAction::triggered, [this, idx]() { on_mpr_layout_switched(idx); });
     };
-    addLayoutChoice(QString("Grade 2x2 (Axial, Coronal, Sagital, 3D)"), 0);
+    addLayoutChoice(QString("Grade 2x2 (Axial, Coronal, Sagital)"), 0);
     addLayoutChoice(QString("Linha 1x3 (Horizontal)"), 1);
     addLayoutChoice(QString("Coluna 3x1 (Vertical)"), 2);
     layoutMenu->addSeparator();
@@ -276,6 +304,27 @@ void RadiantOverlayWindow::setup_3d_toolbar()
     modeMenu->addAction(mw->slicesAct);
     modeMenu->addAction(mw->raycastAct);
     modeMenu->addAction(mw->mipAct);
+    QMenu * lutMenu = modeMenu->addMenu(QString("Cores (LUT compartilhada com 2D)"));
+    LUTWidget * lutWidget = mw->get_lut_widget();
+    if (lutWidget && lutWidget->comboBox)
+    {
+        QActionGroup * lutGroup = new QActionGroup(lutMenu);
+        lutGroup->setExclusive(true);
+        const QString names[] = {QString("Escala de cinza"), QString("Hot metal 768"),
+            QString("RainbowB 1536"), QString("Syngo 1792"), QString("Hot iron"),
+            QString("Hot metal blue"), QString("PET"), QString("PET 20 steps"),
+            QString("Labels 4096")};
+        for (int i = 0; i < lutWidget->comboBox->count() && i < 9; ++i)
+        {
+            QAction * lutAction = lutMenu->addAction(names[i]);
+            lutAction->setCheckable(true);
+            lutAction->setChecked(lutWidget->comboBox->currentIndex() == i);
+            lutGroup->addAction(lutAction);
+            connect(lutAction, &QAction::triggered, lutWidget, [lutWidget, i]() { lutWidget->set_lut(i); });
+            connect(lutWidget->comboBox, QOverload<int>::of(&QComboBox::currentIndexChanged), lutAction,
+                [lutAction, i](int selected) { lutAction->setChecked(selected == i); });
+        }
+    }
     create_menu_button(act_3d_preset, modeMenu, true);
 
     // The native 3D viewport already supports these gestures directly. These
@@ -301,10 +350,10 @@ void RadiantOverlayWindow::setup_3d_toolbar()
     create_menu_button(act_3d_zoom, zoomMenu, false);
 
     toolbar->addSeparator();
-    act_3d_scalpel = new QAction(QIcon(":/bitmaps/cut.svg"), QString("Bisturi 3D (indisponível)"), this);
-    act_3d_scalpel->setToolTip(QString("O corte interativo 3D ainda não está implementado"));
-    act_3d_scalpel->setEnabled(false);
-    toolbar->addAction(act_3d_scalpel);
+    // The native rectangular ROI clips the rendered volume to the selection
+    // made on the axial 2D view; it is not a freehand 3D scalpel.
+    if (mw->get_volume_roi_action())
+        toolbar->addAction(mw->get_volume_roi_action());
 
     act_3d_views = new QAction(QIcon(":/bitmaps/align.svg"), QString("Vistas anatômicas (indisponíveis)"), this);
     act_3d_views->setToolTip(QString("Vistas anatômicas padrão ainda não estão implementadas"));
@@ -430,14 +479,21 @@ void RadiantOverlayWindow::on_mpr_ref_lines_toggled(bool checked)
 
 void RadiantOverlayWindow::on_mpr_slab_mip_thickness(int mode, double thickness)
 {
-    Q_UNUSED(mode);
-    Q_UNUSED(thickness);
     if (!content) return;
-    const auto gwList = content->findChildren<GraphicsWidget*>();
-    for (GraphicsWidget * gw : gwList)
+    bool attempted = false;
+    bool failed = false;
+    const char * const frameNames[] = {"graphicswidget_frameZ", "graphicswidget_frameY", "graphicswidget_frameX"};
+    for (const char * name : frameNames)
     {
-        if (gw) gw->update_image(0, false);
+        QWidget * frame = content->findChild<QWidget *>(name);
+        GraphicsWidget * gw = frame ? frame->findChild<GraphicsWidget *>() : nullptr;
+        if (!gw) { failed = true; continue; }
+        attempted = true;
+        if (!gw->set_slab_projection(mode, thickness)) failed = true;
     }
+    if (!attempted || failed)
+        QMessageBox::warning(this, QString("Projeção MPR"),
+            QString("Não foi possível aplicar a projeção em todos os planos. Selecione uma série volumétrica compatível."));
 }
 
 void RadiantOverlayWindow::on_mpr_reset_planes()
@@ -473,26 +529,27 @@ void RadiantOverlayWindow::on_mpr_reset_planes()
 
 void RadiantOverlayWindow::on_mpr_layout_switched(int layoutIndex)
 {
-    if (!mw) return;
-    switch (layoutIndex)
+    if (!content || layoutIndex < 0 || layoutIndex > 5) return;
+    mpr_layout_state.select(layoutIndex);
+    apply_mpr_layout();
+}
+
+void RadiantOverlayWindow::apply_mpr_layout()
+{
+    if (!content) return;
+    QGridLayout * grid = qobject_cast<QGridLayout *>(content->layout());
+    QWidget * frames[] = {content->findChild<QWidget *>("graphicswidget_frameZ"),
+                          content->findChild<QWidget *>("graphicswidget_frameY"),
+                          content->findChild<QWidget *>("graphicswidget_frameX")};
+    if (!grid || !frames[0] || !frames[1] || !frames[2]) return;
+    for (int i = 0; i < 3; ++i) grid->removeWidget(frames[i]);
+    for (int i = 0; i < 3; ++i)
     {
-    case 0:
-    case 1:
-    case 2:
-        if (mw->zyxAct) mw->zyxAct->trigger();
-        break;
-    case 3:
-        if (mw->graphicsAct_Z) mw->graphicsAct_Z->trigger();
-        break;
-    case 4:
-        if (mw->graphicsAct_Y) mw->graphicsAct_Y->trigger();
-        break;
-    case 5:
-        if (mw->graphicsAct_X) mw->graphicsAct_X->trigger();
-        break;
-    default:
-        break;
+        const auto position = mpr_layout_state.position(i);
+        grid->addWidget(frames[i], position.row, position.column);
+        frames[i]->setVisible(mpr_layout_state.visible(i));
     }
+    QTimer::singleShot(0, this, [this]() { on_mpr_zoom_fit(); });
 }
 
 void RadiantOverlayWindow::on_mpr_export()

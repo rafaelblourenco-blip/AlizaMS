@@ -1856,7 +1856,8 @@ void MainWindow::set_ui()
 		dockWidget1->show();
 		imagesbox_frame1->show();
 		slider_frame->show();
-		view2d_frame->show();
+		// The anatomical planes, MPR and histogram are available in the main toolbar.
+		view2d_frame->hide();
 		info_line->hide();
 		view2d_label->setText("Slice view (Z)");
 		actionViews2DMenu->setEnabled(true);

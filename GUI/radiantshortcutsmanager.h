@@ -10,6 +10,7 @@
 #include "radiantinputdispatcher.h"
 #include "radiantoverlaywindow.h"
 
+class QTimer;
 class MainWindow;
 class Aliza;
 
@@ -224,7 +225,7 @@ private:
     bool cached_menu_visible{true};
     bool cached_dock_visible{true};
     bool cached_status_visible{true};
-    int  cine_timer_id{0};
+    QTimer * cine_timer{nullptr};
     int  current_fps{15};
 };
 

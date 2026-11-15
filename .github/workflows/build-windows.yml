@@ -32,13 +32,13 @@ jobs:
       uses: actions/cache@v4
       with:
         path: ${{ runner.workspace }}/itk-install
-        key: ${{ runner.os }}-itk-5.3.0-modular-msvc2022-v4
+        key: ${{ runner.os }}-itk-5.3.0-modular-msvc2022-v5
 
     - name: Build Modular ITK (if not cached)
       shell: pwsh
       run: |
         $ws = "${{ runner.workspace }}".Replace('\', '/')
-        $itkConfigFile = Get-ChildItem -Path "$ws" -Filter "ITKConfig.cmake" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        $itkConfigFile = Get-ChildItem -Path "$ws/itk-install" -Filter "ITKConfig.cmake" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($itkConfigFile) {
             Write-Output ">> ITK disponivel e valido em: $($itkConfigFile.FullName)"
             exit 0
@@ -55,6 +55,7 @@ jobs:
           -DBUILD_EXAMPLES=OFF `
           -DBUILD_TESTING=OFF `
           -DITK_BUILD_DEFAULT_MODULES=OFF `
+          -DModule_ITKEigen3=ON `
           -DModule_ITKCommon=ON `
           -DModule_ITKImageFilterBase=ON `
           -DModule_ITKImageFunction=ON `
@@ -118,7 +119,7 @@ jobs:
         }
 
     - name: Upload Build Failure Logs
-      if: failure()
+      if: failure() && hashFiles('cmake_build.log') != ''
       uses: actions/upload-artifact@v4
       with:
         name: msvc-build-logs

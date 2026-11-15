@@ -2,6 +2,9 @@
 //#define ALIZA_PERF_COLLISION
 
 #include "aliza.h"
+#include "common/reference_segment.h"
+#include <memory>
+#include <vector>
 #include <QDialog>
 #include <QFormLayout>
 #include <QDoubleSpinBox>
@@ -74,6 +77,7 @@ static btDbvtBroadphase                * g_broadphase = nullptr;
 static btCollisionWorld                * g_collisionWorld = nullptr;
 static btAlignedObjectArray<btCollisionShape*> g_collision_shapes;
 static bool show_all_study_collisions = true;
+static int reference_mode = 0;
 
 struct ClosestRayResultCallback1 : public btCollisionWorld::ClosestRayResultCallback
 {
@@ -370,6 +374,61 @@ void check_slice_collisions(const ImageVariant * v, GraphicsWidget * w)
     if (w && w->graphicsview) w->graphicsview->clear_collision_paths();
 }
 
+namespace {
+struct ReferenceJob {
+    QPointer<StudyGraphicsView> view;
+    mpr_geometry::PlaneRectangle target;
+    std::array<mpr_geometry::Vector3,4> source_corners;
+    ImageTypeUC::Pointer physical_image;
+    QColor color;
+};
+struct ReferenceJobs {
+    QPointer<StudyViewWidget> owner;
+    unsigned long long generation;
+    std::vector<ReferenceJob> jobs;
+    std::size_t next = 0;
+};
+static bool slice_rectangle(const ImageSlice *slice, mpr_geometry::PlaneRectangle &rect)
+{
+    if (!slice) return false;
+    mpr_geometry::Vector3 corners[4];
+    for (int i=0; i<4; ++i) corners[i]={slice->fv[3*i],slice->fv[3*i+1],slice->fv[3*i+2]};
+    return mpr_geometry::rectangle_from_corners(corners,rect);
+}
+static void process_reference_jobs(const std::shared_ptr<ReferenceJobs> &state)
+{
+    if (!state->owner || state->generation != state->owner->property("referenceGeneration").toULongLong()) return;
+    const std::size_t end = (std::min)(state->next + std::size_t(48),state->jobs.size());
+    for (; state->next < end; ++state->next) {
+        const ReferenceJob &job=state->jobs[state->next];
+        if (!job.view || !job.view->isVisible() || !job.physical_image) continue;
+        mpr_geometry::Vector3 corners[4];
+        for (int i=0; i<4; ++i) corners[i]=job.source_corners[i];
+        mpr_geometry::PlaneRectangle source;
+        mpr_geometry::ReferenceSegment segment;
+        if (!mpr_geometry::rectangle_from_corners(corners,source) ||
+            !mpr_geometry::bounded_reference_segment(job.target,source,segment)) continue;
+        itk::Point<float,3> a,b;
+        a[0]=segment.start.x; a[1]=segment.start.y; a[2]=segment.start.z;
+        b[0]=segment.end.x; b[1]=segment.end.y; b[2]=segment.end.z;
+#if ITK_VERSION_MAJOR >= 5
+        const auto ia=job.physical_image->template TransformPhysicalPointToContinuousIndex<float>(a);
+        const auto ib=job.physical_image->template TransformPhysicalPointToContinuousIndex<float>(b);
+#else
+        itk::ContinuousIndex<float,3> ia,ib;
+        job.physical_image->TransformPhysicalPointToContinuousIndex(a,ia);
+        job.physical_image->TransformPhysicalPointToContinuousIndex(b,ib);
+#endif
+        QPainterPath path; path.moveTo(ia[0],ia[1]); path.lineTo(ib[0],ib[1]);
+        QPen pen(job.color); pen.setCosmetic(true);
+        QGraphicsPathItem *item=new QGraphicsPathItem(path);
+        item->setPen(pen); job.view->scene()->addItem(item); job.view->collision_paths.push_back(item);
+    }
+    if (state->next < state->jobs.size())
+        QTimer::singleShot(0,state->owner.data(),[state]() { process_reference_jobs(state); });
+}
+}
+
 void check_slice_collisions2(StudyViewWidget * w)
 {
 #ifdef ALIZA_PERF_COLLISION
@@ -385,7 +444,45 @@ void check_slice_collisions2(StudyViewWidget * w)
 			w->widgets[x]->graphicswidget->graphicsview->clear_collision_paths();
 		}
 	}
-	if (!show_all_study_collisions) return;
+	const auto generation = w->property("referenceGeneration").toULongLong() + 1;
+	w->setProperty("referenceGeneration", QVariant::fromValue<qulonglong>(generation));
+	if (!show_all_study_collisions || !w->get_scouts()) return;
+	if (reference_mode != 0) {
+        auto state=std::make_shared<ReferenceJobs>();
+        state->owner=w; state->generation=generation;
+        for (int x=0; x<widgets_size; ++x) {
+            auto frame=w->widgets.at(x);
+            if (!frame || !frame->isVisible() || !frame->graphicswidget) continue;
+            const ImageVariant *target=frame->graphicswidget->image_container.image3D;
+            if (!target || !target->di || target->frame_of_ref_uid.isEmpty()) continue;
+            const int z=frame->graphicswidget->image_container.selected_z_slice_ext;
+            if (z<0 || z>=static_cast<int>(target->di->image_slices.size())) continue;
+            mpr_geometry::PlaneRectangle targetRect;
+            if (!slice_rectangle(target->di->image_slices.at(z),targetRect)) continue;
+            ImageTypeUC::Pointer physical=ImageTypeUC::New();
+            if (!ContourUtils::phys_space_from_slice(target,z,physical)) continue;
+            for (int u=0; u<widgets_size; ++u) {
+                auto other=w->widgets.at(u);
+                if (!other || !other->isVisible() || !other->graphicswidget) continue;
+                const ImageVariant *source=other->graphicswidget->image_container.image3D;
+                if (!source || !source->di || source->id==target->id || source->study_uid!=target->study_uid || source->frame_of_ref_uid!=target->frame_of_ref_uid) continue;
+                const int count=static_cast<int>(source->di->image_slices.size());
+                if (count<=0 || source->di->idimz!=count) continue;
+                for (int k=0;k<count;++k) {
+                    if (reference_mode==1 && k!=0 && k!=count-1) continue;
+                    const ImageSlice *slice=source->di->image_slices.at(k);
+                    if (!slice) continue;
+                    ReferenceJob job; job.view=frame->graphicswidget->graphicsview;
+                    job.target=targetRect; job.physical_image=physical;
+                    for (int i=0;i<4;++i) job.source_corners[i]={slice->fv[3*i],slice->fv[3*i+1],slice->fv[3*i+2]};
+                    job.color=QColor(static_cast<int>(source->di->R*255),static_cast<int>(source->di->G*255),static_cast<int>(source->di->B*255));
+                    state->jobs.push_back(job);
+                }
+            }
+        }
+        process_reference_jobs(state);
+        return;
+    }
 	for (int x = 0; x < widgets_size; ++x)
 	{
 		if (w->widgets.at(x) && w->widgets.at(x)->isVisible() && w->widgets.at(x)->graphicswidget)
@@ -4064,6 +4161,13 @@ void Aliza::toggle_zlock_one(bool t)
 	}
 	update_toolbox(v);
 	calculate_bb();
+}
+
+void Aliza::set_reference_mode(int mode)
+{
+    if (mode < 0 || mode > 2) return;
+    reference_mode = mode;
+    if (studyview) check_slice_collisions2(studyview);
 }
 
 void Aliza::toggle_collisions(bool t)

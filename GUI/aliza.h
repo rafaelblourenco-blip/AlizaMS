@@ -138,6 +138,7 @@ public:
 	void reset_3d();
 	void set_uniq_string(const QString &);
 	void toggle_collisions(bool);
+	void set_reference_mode(int);
 	void update_slice_from_animation(const ImageVariant*);
 	QString load_dicom_file(const QString&, QProgressDialog*);
 	void remove_from_studyview(int);

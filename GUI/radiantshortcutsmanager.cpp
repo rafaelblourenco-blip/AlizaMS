@@ -407,6 +407,22 @@ void RadiantShortcutsManager::create_radiant_toolbar(QToolBar * parentToolbar)
     configMenu->addAction(QString("Configurações Gerais..."), this, SLOT(trigger_config_dialog()));
     configMenu->addAction(QString("Configurações Avançadas do Sistema..."), this, SLOT(trigger_settings_tab()));
     configMenu->addSeparator();
+    QMenu * referenceMenu = configMenu->addMenu(QString("Linhas de referência"));
+    QActionGroup * referenceGroup = new QActionGroup(referenceMenu);
+    referenceGroup->setExclusive(true);
+    auto addReferenceMode = [this, referenceMenu, referenceGroup](const QString & label, int mode) {
+        QAction * item = referenceMenu->addAction(label);
+        item->setCheckable(true);
+        item->setChecked(mode == 0);
+        referenceGroup->addAction(item);
+        connect(item, &QAction::triggered, [this, mode]() {
+            if (mw && mw->aliza) mw->aliza->set_reference_mode(mode);
+        });
+    };
+    addReferenceMode(QString("Corte atual"), 0);
+    addReferenceMode(QString("Início e fim"), 1);
+    addReferenceMode(QString("Todos os cortes"), 2);
+    configMenu->addSeparator();
     configMenu->addAction(action_dicom_meta);
     configMenu->addAction(action_help);
     createMenuButton(action_config, configMenu, false);

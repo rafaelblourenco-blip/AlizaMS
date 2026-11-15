@@ -54,5 +54,8 @@ int main() {
     require(outside.pixels.IsNotNull() && !outside.all_valid && outside.valid->GetPixel(i)==0,"invalid coverage mask");
     auto covered=render_itk<Image>(image.GetPointer(),center,u,v,1,1,2,3,0,Mode::Mean);
     require(covered.all_valid && covered.valid->GetPixel(i)==1,"valid coverage mask");
+    std::atomic<bool> cancelled(true);
+    auto cancelledResult=render_itk<Image>(image.GetPointer(),center,u,v,1,1,2,3,4,Mode::Mean,&cancelled);
+    require(cancelledResult.pixels.IsNull() && cancelledResult.valid.IsNull(),"cancelled projection");
     std::cout << "ITK slab pixels passed\n";
 }

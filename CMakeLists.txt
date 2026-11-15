@@ -586,6 +586,18 @@ else()
   message(FATAL_ERROR "Can not determine Qt version to use")
 endif()
 
+if(ALIZA_BUILD_MPR_TESTS AND (USE_QT_V_5 OR USE_QT_V_6))
+  add_executable(test_mpr_slab_worker tests/test_mpr_slab_worker.cpp)
+  target_include_directories(test_mpr_slab_worker PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  if(USE_QT_V_6)
+    target_link_libraries(test_mpr_slab_worker PRIVATE Qt6::Core ${ITK_LIBRARIES})
+  else()
+    target_link_libraries(test_mpr_slab_worker PRIVATE Qt5::Core ${ITK_LIBRARIES})
+  endif()
+  set_property(TARGET test_mpr_slab_worker PROPERTY CXX_STANDARD 14)
+  add_test(NAME mpr_slab_worker COMMAND test_mpr_slab_worker)
+endif()
+
 set(ALIZAMS_SRCS "common/mmath.cpp" "common/structures.cpp" "main.cpp")
 
 if(ALIZA_USE_SYSTEM_BULLET)

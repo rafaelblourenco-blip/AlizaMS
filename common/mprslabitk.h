@@ -5,6 +5,7 @@
 #include <itkImage.h>
 #include <itkLinearInterpolateImageFunction.h>
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 
@@ -21,12 +22,12 @@ template <typename TInput>
 ProjectionImage render_itk(
     const TInput *input, Vector3 center, Vector3 u, Vector3 v,
     unsigned int width, unsigned int height, double spacing_u, double spacing_v,
-    double thickness_mm, Mode mode)
+    double thickness_mm, Mode mode, const std::atomic<bool> *cancel = nullptr)
 {
     using Output = itk::Image<double, 2>;
     using Mask = itk::Image<unsigned char, 2>;
     using Interpolator = itk::LinearInterpolateImageFunction<TInput, double>;
-    if (!input || !width || !height || !std::isfinite(spacing_u) || spacing_u <= 0 ||
+    if ((cancel && cancel->load()) || !input || !width || !height || !std::isfinite(spacing_u) || spacing_u <= 0 ||
         !std::isfinite(spacing_v) || spacing_v <= 0 || !std::isfinite(thickness_mm) || thickness_mm < 0)
         return {};
     const auto finite_vector = [](Vector3 a) {
@@ -71,6 +72,7 @@ ProjectionImage render_itk(
     bool all_valid = true;
     for (unsigned int y = 0; y < height; ++y) {
         for (unsigned int x = 0; x < width; ++x) {
+            if (cancel && cancel->load()) return {};
             const Vector3 point = mpr_geometry::pixel_position(center, u, v, x, y,
                                                                 width, height, spacing_u, spacing_v);
             const Result result = project(point, normal, thickness_mm, step, mode, sampler);

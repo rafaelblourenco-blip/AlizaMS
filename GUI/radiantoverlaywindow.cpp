@@ -233,69 +233,50 @@ void RadiantOverlayWindow::setup_mpr_toolbar()
 
 void RadiantOverlayWindow::setup_3d_toolbar()
 {
-    // 1. 3D Volume Rendering Presets with Dropdown
-    act_3d_preset = new QAction(QIcon(":/bitmaps/radiant_3d.svg"), QString("Presets 3D (GPU)"), this);
-    QMenu * presetMenu = new QMenu(toolbar);
-    auto add3dPreset = [this, presetMenu](const QString & label, int preset) {
-        QAction * a = presetMenu->addAction(label);
-        connect(a, &QAction::triggered, [this, preset]() { on_3d_preset_triggered(preset); });
-    };
-    add3dPreset(QString("Osso TC (Bone VR)"), 0);
-    add3dPreset(QString("VR Angio (Vasos Sanguíneos)"), 1);
-    add3dPreset(QString("Músculo / Tecidos Moles"), 2);
-    add3dPreset(QString("Pele / Superfície"), 3);
-    presetMenu->addSeparator();
-    add3dPreset(QString("MIP 3D (Projeção de Intensidade)"), 4);
-    create_menu_button(act_3d_preset, presetMenu, false);
+    // Use the native rendering actions so the renderer and its UI stay in sync.
+    act_3d_preset = new QAction(QIcon(":/bitmaps/radiant_3d.svg"), QString("Modos de visualização 3D"), this);
+    QMenu * modeMenu = new QMenu(toolbar);
+    modeMenu->addAction(mw->slicesAct);
+    modeMenu->addAction(mw->raycastAct);
+    modeMenu->addAction(mw->mipAct);
+    create_menu_button(act_3d_preset, modeMenu, true);
 
-    // 2. Trackball Rotate Tool
-    act_3d_trackball = new QAction(QIcon(":/bitmaps/radiant_transform.svg"), QString("Rotacionar 3D (Trackball)"), this);
-    act_3d_trackball->setCheckable(true);
-    act_3d_trackball->setChecked(true);
-    tool_action_group->addAction(act_3d_trackball);
-    connect(act_3d_trackball, SIGNAL(triggered()), this, SLOT(on_3d_trackball_triggered()));
+    // The native 3D viewport already supports these gestures directly. These
+    // disabled indicators explain the gesture without claiming to select a tool.
+    act_3d_trackball = new QAction(QIcon(":/bitmaps/radiant_transform.svg"), QString("Rotação: arraste com o botão esquerdo"), this);
+    act_3d_trackball->setToolTip(QString("Rotação: arraste com o botão esquerdo na imagem 3D"));
+    act_3d_trackball->setEnabled(false);
     toolbar->addAction(act_3d_trackball);
-
-    // 3. Pan 3D
-    act_3d_pan = new QAction(QIcon(":/bitmaps/radiant_pan.svg"), QString("Mover 3D (Pan)"), this);
-    act_3d_pan->setCheckable(true);
-    tool_action_group->addAction(act_3d_pan);
-    connect(act_3d_pan, SIGNAL(triggered()), this, SLOT(on_3d_pan_triggered()));
+    act_3d_pan = new QAction(QIcon(":/bitmaps/radiant_pan.svg"), QString("Mover: Shift + arrastar ou botão central"), this);
+    act_3d_pan->setToolTip(QString("Mover: Shift + arrastar ou arraste com o botão central"));
+    act_3d_pan->setEnabled(false);
     toolbar->addAction(act_3d_pan);
 
-    // 4. Zoom 3D
-    act_3d_zoom = new QAction(QIcon(":/bitmaps/radiant_zoom.svg"), QString("Zoom 3D"), this);
-    act_3d_zoom->setCheckable(true);
-    tool_action_group->addAction(act_3d_zoom);
+    // Zoom buttons are immediate operations, not a drag-tool selector.
+    act_3d_zoom = new QAction(QIcon(":/bitmaps/radiant_zoom.svg"), QString("Aproximar 3D"), this);
     connect(act_3d_zoom, SIGNAL(triggered()), this, SLOT(on_3d_zoom_triggered()));
-    toolbar->addAction(act_3d_zoom);
+    QMenu * zoomMenu = new QMenu(toolbar);
+    QAction * zoomOut = zoomMenu->addAction(QString("Afastar 3D"));
+    connect(zoomOut, &QAction::triggered, [this]() {
+        GLWidget * glw = content ? content->findChild<GLWidget*>() : nullptr;
+        if (glw) glw->zoom_out(true);
+    });
+    create_menu_button(act_3d_zoom, zoomMenu, false);
 
     toolbar->addSeparator();
-
-    // 5. Clipping Planes / Scalpel
-    act_3d_scalpel = new QAction(QIcon(":/bitmaps/cut.svg"), QString("Bisturi / Planos de Corte"), this);
-    act_3d_scalpel->setCheckable(true);
-    connect(act_3d_scalpel, SIGNAL(toggled(bool)), this, SLOT(on_3d_scalpel_toggled(bool)));
+    act_3d_scalpel = new QAction(QIcon(":/bitmaps/cut.svg"), QString("Bisturi 3D (indisponível)"), this);
+    act_3d_scalpel->setToolTip(QString("O corte interativo 3D ainda não está implementado"));
+    act_3d_scalpel->setEnabled(false);
     toolbar->addAction(act_3d_scalpel);
 
-    // 6. Anatomical Views
-    act_3d_views = new QAction(QIcon(":/bitmaps/align.svg"), QString("Vistas Anatômicas Padrão"), this);
-    QMenu * viewsMenu = new QMenu(toolbar);
-    auto addViewChoice = [this, viewsMenu](const QString & label, int idx) {
-        QAction * a = viewsMenu->addAction(label);
-        connect(a, &QAction::triggered, [this, idx]() { on_3d_anatomical_view(idx); });
-    };
-    addViewChoice(QString("Anterior-Posterior (AP)"), 0);
-    addViewChoice(QString("Posterior-Anterior (PA)"), 1);
-    addViewChoice(QString("Lateral Esquerda"), 2);
-    addViewChoice(QString("Lateral Direita"), 3);
-    viewsMenu->addSeparator();
-    addViewChoice(QString("Superior (Crânio-Caudal)"), 4);
-    addViewChoice(QString("Inferior (Caudo-Cranial)"), 5);
-    create_menu_button(act_3d_views, viewsMenu, true);
+    act_3d_views = new QAction(QIcon(":/bitmaps/align.svg"), QString("Vistas anatômicas (indisponíveis)"), this);
+    act_3d_views->setToolTip(QString("Vistas anatômicas padrão ainda não estão implementadas"));
+    act_3d_views->setEnabled(false);
+    toolbar->addAction(act_3d_views);
 
     // 7. Reset Orientation
-    act_3d_reset_orientation = new QAction(QIcon(":/bitmaps/reload.svg"), QString("Restaurar Orientação 3D"), this);
+    act_3d_reset_orientation = new QAction(QIcon(":/bitmaps/reload.svg"), QString("Restaurar visualização 3D"), this);
+    act_3d_reset_orientation->setToolTip(QString("Restaurar câmera, zoom, brilho, transparência, cubo e contornos"));
     connect(act_3d_reset_orientation, SIGNAL(triggered()), this, SLOT(on_3d_reset_orientation()));
     toolbar->addAction(act_3d_reset_orientation);
 
@@ -570,18 +551,12 @@ void RadiantOverlayWindow::on_3d_anatomical_view(int viewIndex)
 
 void RadiantOverlayWindow::on_3d_reset_orientation()
 {
-    GLWidget * glw = content ? content->findChild<GLWidget*>() : nullptr;
-    if (glw)
+    if (mw)
     {
-        glw->x_rotation = 0;
-        glw->y_rotation = 0;
-        glw->z_rotation = 0;
-        glw->pan_x = 0;
-        glw->pan_y = 0;
-        glw->fov = SCENE_FOV;
-        glw->ortho_size = SCENE_ORTHO_SIZE;
-        glw->set_forward();
-        glw->updateGL();
+        // Use the native reset, including its camera and fit-to-volume state.
+        QMetaObject::invokeMethod(mw, "reset_3d", Qt::DirectConnection);
+        GLWidget * glw = content ? content->findChild<GLWidget*>() : nullptr;
+        if (glw) glw->updateGL();
     }
 }
 

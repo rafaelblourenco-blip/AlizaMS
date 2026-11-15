@@ -338,8 +338,25 @@ bool GraphicsView::is_anonymous_mode()
 void GraphicsView::drawForeground(QPainter * painter, const QRectF & rect)
 {
 	Q_UNUSED(rect);
-	if (!s_show_hud) return;
 	if (!parent || !parent->image_container.image3D) return;
+	if (parent->slab_mode() != 0 || !parent->slab_error().isEmpty())
+	{
+		painter->save();
+		painter->resetTransform();
+		const QString mode = parent->slab_mode() == 1 ? QString("MIP") :
+			(parent->slab_mode() == 2 ? QString("MinIP") : QString("Average"));
+		const QString label = !parent->slab_error().isEmpty() ? parent->slab_error() :
+			QString("%1 %2 mm%3").arg(mode).arg(parent->slab_thickness(), 0, 'f', 1)
+				.arg(parent->slab_pending() ? QString(" - calculando") : QString());
+		const QRect r = viewport()->rect();
+		const QRect labelRect(r.left(), r.top() + 4, r.width(), 22);
+		painter->setPen(Qt::black);
+		painter->drawText(labelRect.translated(1, 1), Qt::AlignHCenter | Qt::AlignVCenter, label);
+		painter->setPen(Qt::white);
+		painter->drawText(labelRect, Qt::AlignHCenter | Qt::AlignVCenter, label);
+		painter->restore();
+	}
+	if (!s_show_hud) return;
 
 	const ImageVariant * iv = parent->image_container.image3D;
 	if (!iv || !iv->di) return;
@@ -443,7 +460,7 @@ void GraphicsView::drawForeground(QPainter * painter, const QRectF & rect)
 		bl_y -= lineHeight;
 	}
 
-	if (cfg.show_thickness_loc)
+	if (cfg.show_thickness_loc && parent->slab_mode() == 0)
 	{
 		if (iv->di->iz_spacing > 0.0)
 		{

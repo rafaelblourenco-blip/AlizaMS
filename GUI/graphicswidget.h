@@ -23,6 +23,7 @@
 
 class QGraphicsPathItem;
 class Aliza;
+class SlabProjectionWorker;
 
 class GraphicsWidget : public QWidget
 {
@@ -121,6 +122,11 @@ public:
 		bool fastDraftMode = false);
 	void reset_oblique_slice();
 	bool set_slab_projection(int mode, double thickness_mm);
+	const Image2DTypeUC::Pointer & slab_mask() const { return m_slab_mask; }
+	int slab_mode() const { return m_slab_mode; }
+	double slab_thickness() const { return m_slab_thickness_mm; }
+	bool slab_pending() const { return m_slab_pending; }
+	QString slab_error() const { return m_slab_error; }
 	bool is_oblique() const { return m_is_oblique_active; }
 	double get_oblique_angle() const { return m_oblique_angle; }
 
@@ -170,6 +176,15 @@ private:
 	short m_oblique_source_plane{2};
 	int m_slab_mode{0};
 	double m_slab_thickness_mm{0.0};
+	Image2DTypeUC::Pointer m_slab_mask;
+	QList<SlabProjectionWorker*> m_slab_workers;
+	SlabProjectionWorker *m_slab_queued{nullptr};
+	unsigned long long m_slab_generation{0};
+	bool m_slab_pending{false};
+	QString m_slab_error;
+	void cancel_slab_workers();
+	void start_slab_worker(SlabProjectionWorker*);
+	bool update_projected_pixel_value(double, double);
 };
 
 #endif

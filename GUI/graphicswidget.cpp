@@ -3,6 +3,7 @@
 #include "graphicswidget.h"
 #include "common/mprgeometry.h"
 #include "common/mprslabitk.h"
+#include "mprslabworker.h"
 #include <QtGlobal>
 #include <QVBoxLayout>
 #include <QSplitter>
@@ -36,6 +37,8 @@
 #include "mmath.h"
 #include <climits>
 #include <utility>
+#include <atomic>
+#include <functional>
 #ifdef A_TMP_BENCHMARK
 #include <chrono>
 #endif
@@ -1644,13 +1647,26 @@ template<typename T> void load_image(
 #endif
 		if (axis == 2)
 		{
-			if (widget->get_enable_overlays())
+			if (widget->slab_mode() == 0 && widget->get_enable_overlays())
 				GraphicsUtils::draw_overlays(ivariant, tmpi);
 		}
 		else
 		{
 			if (!ivariant->equi || ivariant->orientation_string.isEmpty())
 				GraphicsUtils::draw_cross_out(tmpi);
+		}
+		const Image2DTypeUC::Pointer & mask = widget->slab_mask();
+		if (mask.IsNotNull() && mask->GetLargestPossibleRegion().GetSize() == size)
+		{
+			const unsigned char * valid = mask->GetBufferPointer();
+			unsigned char * rgb = tmpi.bits();
+			for (unsigned int y = 0; y < size[1]; ++y)
+				for (unsigned int x = 0; x < size[0]; ++x)
+					if (!valid[y * size[0] + x])
+					{
+						unsigned char * px = rgb + y * tmpi.bytesPerLine() + x * 3;
+						px[0] = px[1] = px[2] = 0;
+					}
 		}
 #if QT_VERSION < QT_VERSION_CHECK(5,3,0)
 		widget->graphicsview->image_item->setPixmap(QPixmap::fromImage(tmpi));
@@ -1724,12 +1740,15 @@ template<typename T> void load_image(
 	widget->set_top_label_text(top_string);
 	widget->set_left_label_text(left_string);
 	//
-	if (redraw_contours && axis == 2)
+	if (widget->slab_mode() == 0 && redraw_contours && axis == 2)
 		draw_contours(ivariant, widget);
 	//
-	widget->graphicsview->draw_shutter(ivariant);
-	widget->graphicsview->draw_prgraphics(ivariant);
-	widget->graphicsview->draw_prtexts(ivariant);
+	if (widget->slab_mode() == 0)
+	{
+		widget->graphicsview->draw_shutter(ivariant);
+		widget->graphicsview->draw_prgraphics(ivariant);
+		widget->graphicsview->draw_prtexts(ivariant);
+	}
 	//
 	widget->graphicsview->setTransform(t);
 	//
@@ -1842,6 +1861,50 @@ template<typename T> double get_distance(
 
 }
 
+void GraphicsWidget::cancel_slab_workers()
+{
+	++m_slab_generation;
+	for (SlabProjectionWorker * worker : m_slab_workers) worker->cancelled.store(true);
+	delete m_slab_queued;
+	m_slab_queued = nullptr;
+}
+
+void GraphicsWidget::start_slab_worker(SlabProjectionWorker * worker)
+{
+	m_slab_workers.append(worker);
+	connect(worker, &QThread::finished, this, [this, worker]() {
+		m_slab_workers.removeOne(worker);
+		if (!worker->cancelled.load() && worker->generation == m_slab_generation)
+		{
+			m_slab_pending = false;
+			if (worker->result.pixels.IsNotNull() && worker->result.valid.IsNotNull())
+			{
+				image_container.image2D->pD = worker->result.pixels;
+				m_slab_mask = worker->result.valid;
+				image_container.image2D->idimx = worker->width;
+				image_container.image2D->idimy = worker->height;
+				image_container.image2D->image_type = 6;
+				update_image(0, false, false);
+			}
+			else
+			{
+				m_slab_mode = 0;
+				m_slab_thickness_mm = 0.0;
+				m_slab_error = QString("Projecao indisponivel para esta imagem");
+				graphicsview->viewport()->update();
+			}
+		}
+		worker->deleteLater();
+		if (m_slab_queued && m_slab_workers.size() < 2)
+		{
+			SlabProjectionWorker * next = m_slab_queued;
+			m_slab_queued = nullptr;
+			start_slab_worker(next);
+		}
+	});
+	worker->start();
+}
+
 GraphicsWidget::GraphicsWidget(
 	short a,
 	bool,
@@ -1875,6 +1938,13 @@ GraphicsWidget::GraphicsWidget(
 
 GraphicsWidget::~GraphicsWidget()
 {
+	cancel_slab_workers();
+	for (SlabProjectionWorker * worker : m_slab_workers)
+	{
+		worker->wait();
+		delete worker;
+	}
+	m_slab_workers.clear();
 	run__ = false;
 	if (image_container.image2D)
 	{
@@ -2176,6 +2246,14 @@ void GraphicsWidget::update_image(
 
 void GraphicsWidget::clear_()
 {
+	cancel_slab_workers();
+	m_slab_pending = false;
+	m_slab_error.clear();
+	m_slab_mode = 0;
+	m_slab_thickness_mm = 0.0;
+	m_slab_mask = nullptr;
+	m_is_oblique_active = false;
+	m_oblique_angle = 0.0;
 	if (graphicsview->image_item)
 	{
 #ifdef DELETE_GRAPHICSIMAGEITEM
@@ -2401,6 +2479,9 @@ void GraphicsWidget::set_slice_2D(
 	const bool alw_usregs,
 	const bool per_frame_level_found)
 {
+	cancel_slab_workers();
+	m_slab_pending = m_slab_mode != 0;
+	m_slab_mask = nullptr;
 	if (graphicsview->image_item)
 	{
 #ifdef DELETE_GRAPHICSIMAGEITEM
@@ -2434,6 +2515,8 @@ void GraphicsWidget::set_slice_2D(
 		m_is_oblique_active = false;
 		m_slab_mode = 0;
 		m_slab_thickness_mm = 0.0;
+		m_slab_pending = false;
+		m_slab_error.clear();
 	}
 	image_container.image3D = v;
 	//
@@ -2763,6 +2846,9 @@ void GraphicsWidget::set_oblique_slice_2D(
 	m_oblique_angle = angle;
 	m_oblique_source_plane = source_plane;
 
+	// Keep the current thin image while a slab request is pending.
+	if (m_slab_mode == 0)
+	{
 	// Clear previous 2D slices
 	if (image_container.image2D->pSS.IsNotNull())
 	{
@@ -2808,6 +2894,8 @@ void GraphicsWidget::set_oblique_slice_2D(
 	{
 		image_container.image2D->pULL->DisconnectPipeline();
 		image_container.image2D->pULL = nullptr;
+	}
+
 	}
 
 	// Compute physical center point from current crosshair indices
@@ -2920,53 +3008,43 @@ void GraphicsWidget::set_oblique_slice_2D(
 
 	if (m_slab_mode != 0)
 	{
+		cancel_slab_workers();
+		m_slab_pending = true;
+		m_slab_error.clear();
+		const auto generation = m_slab_generation;
 		const auto mode = m_slab_mode == 1 ? mpr_slab::Mode::Maximum :
 			(m_slab_mode == 2 ? mpr_slab::Mode::Minimum : mpr_slab::Mode::Mean);
 		const mpr_geometry::Vector3 c{centerPoint[0], centerPoint[1], centerPoint[2]};
 		const mpr_geometry::Vector3 u{vecU[0], vecU[1], vecU[2]};
 		const mpr_geometry::Vector3 w{vecV[0], vecV[1], vecV[2]};
-		bool projection_ok = false;
-		auto render = [&](const auto & input) {
+		const double thickness = m_slab_thickness_mm;
+		auto worker = new SlabProjectionWorker();
+		worker->generation = generation;
+		worker->width = width;
+		worker->height = height;
+		auto prepare = [&](const auto & input) {
 			if (input.IsNotNull())
-			{
-				const auto projection = mpr_slab::render_itk(
-					input.GetPointer(), c, u, w, width, height, spacingU, spacingV,
-					m_slab_thickness_mm, mode);
-				// Until the renderer accepts a coverage mask, never display invalid
-				// pixels as if their placeholder value were a real intensity.
-				if (projection.all_valid && projection.pixels.IsNotNull())
-				{
-					image_container.image2D->pD = projection.pixels;
-					projection_ok = true;
-				}
-			}
+				worker->render = [input, c, u, w, width, height, spacingU, spacingV, thickness, mode](const std::atomic<bool> *cancel) {
+					return mpr_slab::render_itk(input.GetPointer(), c, u, w, width, height,
+						spacingU, spacingV, thickness, mode, cancel);
+				};
 		};
 		switch (v->image_type)
 		{
-		case 0: render(v->pSS); break;
-		case 1: render(v->pUS); break;
-		case 2: render(v->pSI); break;
-		case 3: render(v->pUI); break;
-		case 4: render(v->pUC); break;
-		case 5: render(v->pF); break;
-		case 6: render(v->pD); break;
-		case 7: render(v->pSLL); break;
-		case 8: render(v->pULL); break;
+		case 0: prepare(v->pSS); break;
+		case 1: prepare(v->pUS); break;
+		case 2: prepare(v->pSI); break;
+		case 3: prepare(v->pUI); break;
+		case 4: prepare(v->pUC); break;
+		case 5: prepare(v->pF); break;
+		case 6: prepare(v->pD); break;
+		case 7: prepare(v->pSLL); break;
+		case 8: prepare(v->pULL); break;
 		default: break;
 		}
-		if (projection_ok)
-		{
-			image_container.image2D->idimx = width;
-			image_container.image2D->idimy = height;
-			image_container.image2D->image_type = 6;
-			update_image(0, false, false);
-		}
-		else
-		{
-			m_slab_mode = 0;
-			m_slab_thickness_mm = 0.0;
-			set_slice_2D(v, 0, false);
-		}
+		if (m_slab_workers.size() >= 2) m_slab_queued = worker;
+		else start_slab_worker(worker);
+		graphicsview->viewport()->update();
 		return;
 	}
 
@@ -3044,10 +3122,11 @@ bool GraphicsWidget::set_slab_projection(int mode, double thickness_mm)
 	if (!v || !v->di || !v->equi || v->image_type < 0 || v->image_type > 8 ||
 		mode < 0 || mode > 3 || !std::isfinite(thickness_mm) || thickness_mm < 0.0 ||
 		(mode != 0 && thickness_mm == 0.0)) return false;
+	m_slab_error.clear();
 	m_slab_mode = mode;
 	m_slab_thickness_mm = mode ? thickness_mm : 0.0;
 	set_slice_2D(v, 0, false);
-	return mode == 0 || (m_slab_mode == mode && image_container.image2D->pD.IsNotNull());
+	return mode == 0 || m_slab_pending;
 }
 
 void GraphicsWidget::reset_oblique_slice()
@@ -3064,6 +3143,11 @@ void GraphicsWidget::set_axis(int a)
 {
 	if (axis != a)
 	{
+		cancel_slab_workers();
+		m_slab_mode = 0;
+		m_slab_pending = false;
+		m_slab_mask = nullptr;
+		m_slab_error.clear();
 		m_is_oblique_active = false;
 		m_oblique_angle = 0.0;
 		if (graphicsview) graphicsview->reset_reference_line_angles();
@@ -3675,8 +3759,27 @@ bool GraphicsWidget::get_show_cursor() const
 	return show_cursor;
 }
 
+bool GraphicsWidget::update_projected_pixel_value(double x, double y)
+{
+	if (m_slab_mode == 0 || m_slab_mask.IsNull()) return false;
+	if (!image_container.image2D || image_container.image2D->pD.IsNull() || x < 0 || y < 0)
+	{
+		info_line->clear();
+		return true;
+	}
+	Image2DTypeD::IndexType index;
+	index[0] = static_cast<long>(x);
+	index[1] = static_cast<long>(y);
+	if (!m_slab_mask->GetLargestPossibleRegion().IsInside(index) || !m_slab_mask->GetPixel(index))
+		info_line->clear();
+	else
+		info_line->setText(QString::number(image_container.image2D->pD->GetPixel(index), 'f', 4));
+	return true;
+}
+
 void GraphicsWidget::update_pixel_value(double x, double  y)
 {
+	if (update_projected_pixel_value(x, y)) return;
 	if (x < 0.0 || y < 0.0 || !image_container.image3D)
 	{
 		info_line->setText("");
@@ -3748,6 +3851,7 @@ void GraphicsWidget::update_pixel_value(double x, double  y)
 
 void GraphicsWidget::update_pixel_value2(double x, double y)
 {
+	if (update_projected_pixel_value(x, y)) return;
 	if (x < 0.0 || y < 0.0 || !image_container.image3D)
 	{
 		info_line->setText("");
@@ -3973,7 +4077,7 @@ void GraphicsWidget::show_image_info()
 void GraphicsWidget::set_contours_width(double x)
 {
 	contours_width = x;
-	if (image_container.image3D)
+	if (image_container.image3D && m_slab_mode == 0)
 		draw_contours(image_container.image3D, this);
 }
 

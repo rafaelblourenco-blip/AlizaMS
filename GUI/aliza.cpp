@@ -31,6 +31,7 @@
 #include "spectroscopyutils.h"
 #include "updateqtcommand.h"
 #include "histogramgen.h"
+#include <QTimer>
 #include "studyframewidget.h"
 #include "studygraphicswidget.h"
 #include "srwidget.h"
@@ -2611,6 +2612,10 @@ void Aliza::update_selection_common1(ImageVariant * v)
 			graphicswidget_x->clear_();
 		}
 		histogramview->update__(v);
+		// Defer the potentially expensive computation until selection handling
+		// finishes; the slot resolves the currently selected image again.
+		if (v && v->histogram.isNull())
+			QTimer::singleShot(0, this, SLOT(trigger_reload_histogram_if_needed()));
 	}
 	else
 	{
@@ -2932,6 +2937,12 @@ void Aliza::set_hide_zoom(bool t)
 void Aliza::set_histogram_mode(bool t)
 {
 	histogram_mode = t;
+}
+
+void Aliza::trigger_reload_histogram_if_needed()
+{
+	ImageVariant * v = get_selected_image();
+	if (histogram_mode && v && v->histogram.isNull()) trigger_reload_histogram();
 }
 
 void Aliza::trigger_reload_histogram()

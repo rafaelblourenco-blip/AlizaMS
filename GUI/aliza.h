@@ -189,6 +189,7 @@ public slots:
 	void reset_rect2();
 	void reset_level();
 	void trigger_reload_histogram();
+	void trigger_reload_histogram_if_needed();
 	void create_group();
 	void remove_group();
 	void start_3D_anim();

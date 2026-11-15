@@ -2,6 +2,7 @@
 
 #include "graphicswidget.h"
 #include "common/mprgeometry.h"
+#include "common/mprslabitk.h"
 #include <QtGlobal>
 #include <QVBoxLayout>
 #include <QSplitter>
@@ -2428,7 +2429,12 @@ void GraphicsWidget::set_slice_2D(
 	int x{};
 	QString error_;
 	//
-	if (image_container.image3D != v) m_is_oblique_active = false;
+	if (image_container.image3D != v)
+	{
+		m_is_oblique_active = false;
+		m_slab_mode = 0;
+		m_slab_thickness_mm = 0.0;
+	}
 	image_container.image3D = v;
 	//
 	if (!image_container.image2D) return;
@@ -2728,7 +2734,7 @@ void GraphicsWidget::set_slice_2D(
 		}
 	}
 	// Rebuild the rotated slice after normal navigation has updated the indices.
-	if (m_is_oblique_active)
+	if (m_is_oblique_active || m_slab_mode != 0)
 		set_oblique_slice_2D(v, m_oblique_angle, axis, m_oblique_source_plane, false);
 
 }
@@ -2745,7 +2751,7 @@ void GraphicsWidget::set_oblique_slice_2D(
 	image_container.image3D = v;
 
 	// Check if rotation angle is practically zero
-	if (std::abs(angle) < 1e-4)
+	if (std::abs(angle) < 1e-4 && m_slab_mode == 0)
 	{
 		m_is_oblique_active = false;
 		m_oblique_angle = 0.0;
@@ -2753,7 +2759,7 @@ void GraphicsWidget::set_oblique_slice_2D(
 		return;
 	}
 
-	m_is_oblique_active = true;
+	m_is_oblique_active = std::abs(angle) >= 1e-4;
 	m_oblique_angle = angle;
 	m_oblique_source_plane = source_plane;
 
@@ -2912,6 +2918,58 @@ void GraphicsWidget::set_oblique_slice_2D(
 	centerPoint[1] = outputCenter.y;
 	centerPoint[2] = outputCenter.z;
 
+	if (m_slab_mode != 0)
+	{
+		const auto mode = m_slab_mode == 1 ? mpr_slab::Mode::Maximum :
+			(m_slab_mode == 2 ? mpr_slab::Mode::Minimum : mpr_slab::Mode::Mean);
+		const mpr_geometry::Vector3 c{centerPoint[0], centerPoint[1], centerPoint[2]};
+		const mpr_geometry::Vector3 u{vecU[0], vecU[1], vecU[2]};
+		const mpr_geometry::Vector3 w{vecV[0], vecV[1], vecV[2]};
+		bool projection_ok = false;
+		auto render = [&](const auto & input) {
+			if (input.IsNotNull())
+			{
+				const auto projection = mpr_slab::render_itk(
+					input.GetPointer(), c, u, w, width, height, spacingU, spacingV,
+					m_slab_thickness_mm, mode);
+				// Until the renderer accepts a coverage mask, never display invalid
+				// pixels as if their placeholder value were a real intensity.
+				if (projection.all_valid && projection.pixels.IsNotNull())
+				{
+					image_container.image2D->pD = projection.pixels;
+					projection_ok = true;
+				}
+			}
+		};
+		switch (v->image_type)
+		{
+		case 0: render(v->pSS); break;
+		case 1: render(v->pUS); break;
+		case 2: render(v->pSI); break;
+		case 3: render(v->pUI); break;
+		case 4: render(v->pUC); break;
+		case 5: render(v->pF); break;
+		case 6: render(v->pD); break;
+		case 7: render(v->pSLL); break;
+		case 8: render(v->pULL); break;
+		default: break;
+		}
+		if (projection_ok)
+		{
+			image_container.image2D->idimx = width;
+			image_container.image2D->idimy = height;
+			image_container.image2D->image_type = 6;
+			update_image(0, false, false);
+		}
+		else
+		{
+			m_slab_mode = 0;
+			m_slab_thickness_mm = 0.0;
+			set_slice_2D(v, 0, false);
+		}
+		return;
+	}
+
 	QString error_;
 	switch (v->image_type)
 	{
@@ -2978,6 +3036,18 @@ void GraphicsWidget::set_oblique_slice_2D(
 		image_container.image2D->image_type = v->image_type;
 		update_image(0, false, false);
 	}
+}
+
+bool GraphicsWidget::set_slab_projection(int mode, double thickness_mm)
+{
+	ImageVariant * v = image_container.image3D;
+	if (!v || !v->di || !v->equi || v->image_type < 0 || v->image_type > 8 ||
+		mode < 0 || mode > 3 || !std::isfinite(thickness_mm) || thickness_mm < 0.0 ||
+		(mode != 0 && thickness_mm == 0.0)) return false;
+	m_slab_mode = mode;
+	m_slab_thickness_mm = mode ? thickness_mm : 0.0;
+	set_slice_2D(v, 0, false);
+	return mode == 0 || (m_slab_mode == mode && image_container.image2D->pD.IsNotNull());
 }
 
 void GraphicsWidget::reset_oblique_slice()

@@ -560,34 +560,6 @@ void GraphicsView::drawForeground(QPainter * painter, const QRectF & rect)
 		painter->drawText(badge_rect, Qt::AlignCenter, measure_text);
 	}
 
-	// 4. MPR Reference Line Rotation Handles
-	if (parent && parent->image_container.image3D)
-	{
-		auto drawRotationHandle = [&](const QPointF & scenePos, bool isHovered) {
-			if (scenePos.isNull()) return;
-			const QPointF pt = mapFromScene(scenePos);
-			if (!vr.contains(pt.toPoint())) return;
-
-			painter->setRenderHint(QPainter::Antialiasing, true);
-			if (isHovered)
-			{
-				painter->setPen(QPen(QColor(56, 189, 248), 2.0)); // #38BDF8
-				painter->setBrush(QBrush(QColor(14, 165, 233, 220)));
-				painter->drawEllipse(pt, 5.5, 5.5);
-			}
-			else
-			{
-				painter->setPen(QPen(QColor(255, 255, 255, 220), 1.5));
-				painter->setBrush(QBrush(QColor(7, 23, 40, 200)));
-				painter->drawEllipse(pt, 4.0, 4.0);
-			}
-		};
-
-		if (!m_handle_h1_scene.isNull()) drawRotationHandle(m_handle_h1_scene, m_hover_ref_line == 1 && m_hover_ref_end == 1);
-		if (!m_handle_h2_scene.isNull()) drawRotationHandle(m_handle_h2_scene, m_hover_ref_line == 1 && m_hover_ref_end == 2);
-		if (!m_handle_v1_scene.isNull()) drawRotationHandle(m_handle_v1_scene, m_hover_ref_line == 2 && m_hover_ref_end == 1);
-		if (!m_handle_v2_scene.isNull()) drawRotationHandle(m_handle_v2_scene, m_hover_ref_line == 2 && m_hover_ref_end == 2);
-	}
 
 	painter->restore();
 }

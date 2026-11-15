@@ -534,6 +534,15 @@ find_package(ITK REQUIRED COMPONENTS
 include(${ITK_USE_FILE})
 message(STATUS "ITK: ${ITK_LIBRARIES}")
 
+option(ALIZA_BUILD_MPR_TESTS "Build MPR pixel tests" OFF)
+if(ALIZA_BUILD_MPR_TESTS)
+  enable_testing()
+  add_executable(test_mpr_slab_itk tests/test_mpr_slab_itk.cpp)
+  target_link_libraries(test_mpr_slab_itk PRIVATE ${ITK_LIBRARIES})
+  set_property(TARGET test_mpr_slab_itk PROPERTY CXX_STANDARD 14)
+  add_test(NAME mpr_slab_itk COMMAND test_mpr_slab_itk)
+endif()
+
 if(USE_QT_V_6)
   find_package(Qt6 REQUIRED COMPONENTS
     Core

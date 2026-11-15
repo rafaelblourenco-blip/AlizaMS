@@ -120,6 +120,7 @@ public:
 		short source_plane,
 		bool fastDraftMode = false);
 	void reset_oblique_slice();
+	bool set_slab_projection(int mode, double thickness_mm);
 	bool is_oblique() const { return m_is_oblique_active; }
 	double get_oblique_angle() const { return m_oblique_angle; }
 
@@ -167,6 +168,8 @@ private:
 	bool m_is_oblique_active{false};
 	double m_oblique_angle{0.0};
 	short m_oblique_source_plane{2};
+	int m_slab_mode{0};
+	double m_slab_thickness_mm{0.0};
 };
 
 #endif

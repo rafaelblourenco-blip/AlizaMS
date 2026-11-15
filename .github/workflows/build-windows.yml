@@ -35,6 +35,14 @@ jobs:
         .\mpr_geometry_test.exe
         if ($LASTEXITCODE -ne 0) { throw "Testes de geometria MPR falharam (codigo $LASTEXITCODE)" }
 
+    - name: Test MPR slab projections
+      shell: pwsh
+      run: |
+        cl /nologo /EHsc /std:c++14 tests\test_mpr_slab.cpp /Fe:mpr_slab_test.exe
+        if ($LASTEXITCODE -ne 0) { throw "Falha ao compilar testes de projecao MPR (codigo $LASTEXITCODE)" }
+        .\mpr_slab_test.exe
+        if ($LASTEXITCODE -ne 0) { throw "Testes de projecao MPR falharam (codigo $LASTEXITCODE)" }
+
     - name: Cache ITK
       id: cache-itk
       uses: actions/cache@v4
@@ -100,6 +108,7 @@ jobs:
         Set-Location build
         cmake -G "Visual Studio 17 2022" -A x64 `
           -DALIZA_QT_VERSION=5 `
+          -DALIZA_BUILD_MPR_TESTS=ON `
           -DCMAKE_BUILD_TYPE=Release `
           -DCMAKE_PREFIX_PATH="$qtRoot;$qtRoot/lib/cmake" `
           -DQt5_DIR="$qt5Dir" `
@@ -128,6 +137,12 @@ jobs:
             Write-Error "Compilacao do Aliza MS falhou com codigo $LASTEXITCODE"
             exit $LASTEXITCODE
         }
+
+    - name: Test ITK MPR pixels
+      shell: pwsh
+      run: |
+        ctest --test-dir build -C Release --output-on-failure
+        if ($LASTEXITCODE -ne 0) { throw "Testes ITK MPR falharam (codigo $LASTEXITCODE)" }
 
     - name: Upload Build Failure Logs
       if: failure() && hashFiles('cmake_build.log') != ''

@@ -91,11 +91,14 @@ public slots:
 	void exit_null();
 	void set_style(const QString &);
 	void set_image_view();
+	void toggle_deidentify();
+	void toggle_browser();
+	void toggle_settingswidget();
+	void trigger_image_dicom_meta();
+	void on_dock1_location_changed(Qt::DockWidgetArea);
 
 private slots:
 	void about();
-	void toggle_browser();
-	void toggle_settingswidget();
 	void toggle_showgl(bool);
 	void toggle_show2D(bool);
 	void toggle_graphicswidget_m_x(bool);
@@ -137,7 +140,6 @@ private slots:
 	void tab_ind_changed(int);
 	void set_zlock(bool);
 	void set_zlock_one(bool);
-	void trigger_image_dicom_meta();
 	void ask_close();
 	void trigger_studyview();
 	void trigger_studyview_checked();
@@ -212,6 +214,8 @@ private:
 	QMenu * deidentify_menu;
 	QMenu * settings_menu;
 	QMenu * multiview_menu;
+	QMenu * help_menu;
+	QAction * action_dicom_meta_help;
 	QToolBar * toolbar2;
 	QToolBar * toolbar3;
 	QToolBar * toolbar4;

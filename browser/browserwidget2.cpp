@@ -36,6 +36,10 @@
 #include <mdcmParseException.h>
 #include "codecutils.h"
 #include "dicomutils.h"
+#include "ziputils.h"
+#include <QMenu>
+#include <QAction>
+#include <QItemSelection>
 #include <vector>
 #include <string>
 #include <exception>
@@ -58,6 +62,7 @@ const mdcm::Tag tStudyDescription                           (0x0008,0x1030);
 const mdcm::Tag tSeriesDescription                          (0x0008,0x103e);
 const mdcm::Tag tPatientsName                               (0x0010,0x0010);
 const mdcm::Tag tPatientsBirthDate                          (0x0010,0x0030);
+const mdcm::Tag tStudyInstanceUID                           (0x0020,0x000d);
 const mdcm::Tag tSeriesInstanceUID                          (0x0020,0x000e);
 const mdcm::Tag tRows                                       (0x0028,0x0010);
 const mdcm::Tag tColumns                                    (0x0028,0x0011);
@@ -127,6 +132,7 @@ BrowserWidget2::BrowserWidget2(float si)
 	selected_tags.insert(mdcm::Tag(0x0008,0x103e));
 	selected_tags.insert(mdcm::Tag(0x0010,0x0010));
 	selected_tags.insert(mdcm::Tag(0x0010,0x0030));
+	selected_tags.insert(mdcm::Tag(0x0020,0x000d));
 	selected_tags.insert(mdcm::Tag(0x0028,0x0010));
 	selected_tags.insert(mdcm::Tag(0x0028,0x0011));
 	selected_tags.insert(mdcm::Tag(0x0028,0x0100));
@@ -150,6 +156,9 @@ BrowserWidget2::BrowserWidget2(float si)
 #endif
 	refresh_sc = new QShortcut(QKeySequence::Refresh, this, SLOT(reload_dir()));
 	refresh_sc->setAutoRepeat(false);
+	tableWidget->setContextMenuPolicy(Qt::CustomContextMenu);
+	connect(tableWidget, SIGNAL(customContextMenuRequested(const QPoint &)),
+			this, SLOT(show_context_menu(const QPoint &)));
 }
 
 void BrowserWidget2::closeEvent(QCloseEvent * e)
@@ -294,13 +303,16 @@ void BrowserWidget2::process_directory(const QString & p, const mdcm::Dict & dic
 			const unsigned int series_size = i->files.size();
 			if (series_size > 0)
 			{
+				QString study_uid;
 				read_tags_(
 					i->files.at(0),
 					name,birthdate,
 					modality,
 					study,study_date,
 					series,series_date,
+					study_uid,
 					&is_image,&is_softcopy);
+				i->study_uid = study_uid;
 			}
 			qApp->processEvents();
 			if (pd->wasCanceled()) return;
@@ -373,13 +385,16 @@ void BrowserWidget2::process_directory(const QString & p, const mdcm::Dict & dic
 #endif
 		TableWidgetItem * i = new TableWidgetItem(ids);
 		i->files.push_back(tmp1);
+		QString study_uid;
 		read_tags_(
 			tmp1,
 			name, birthdate,
 			modality,
 			study, study_date,
 			series, series_date,
+			study_uid,
 			&is_image, &is_softcopy);
+		i->study_uid = study_uid;
 		tableWidget->setRowCount(idx + 1);
 		tableWidget->setItem(idx, 0, static_cast<QTableWidgetItem*>(i));
 		if (is_image)
@@ -516,6 +531,15 @@ void BrowserWidget2::dropEvent(QDropEvent * e)
 		else if (fi.isFile() && (fi.fileName().toUpper() == QString("DICOMDIR")))
 		{
 			open_DICOMDIR2(f);
+		}
+		else if (fi.isFile() && ZipUtils::isZipArchive(f))
+		{
+			QString errorMsg;
+			const QString extractedDir = ZipUtils::extractZipToTemp(f, nullptr, &errorMsg);
+			if (!extractedDir.isEmpty())
+			{
+				open_dicom_dir2(extractedDir);
+			}
 		}
 		else
 		{
@@ -1268,6 +1292,7 @@ void BrowserWidget2::read_tags_(
 	QString & study_date_,
 	QString & seriesdesc_,
 	QString & series_date_,
+	QString & study_uid_,
 	bool * is_image,
 	bool * is_softcopy)
 {
@@ -1335,6 +1360,16 @@ void BrowserWidget2::read_tags_(
 			QByteArray ba(e.GetByteValue()->GetPointer(), e.GetByteValue()->GetLength());
 			const QString tmp0 = CodecUtils::toUTF8(&ba, charset.toLatin1().constData());
 			if (!tmp0.isEmpty()) studydesc_ = tmp0.simplified();
+		}
+	}
+	//
+	{
+		const mdcm::DataElement & e = ds.GetDataElement(tStudyInstanceUID);
+		if (!e.IsEmpty() && !e.IsUndefinedLength() && e.GetByteValue())
+		{
+			study_uid_ = QString::fromLatin1(
+				e.GetByteValue()->GetPointer(),
+				e.GetByteValue()->GetLength()).trimmed().remove(QChar('\0'));
 		}
 	}
 	//
@@ -1868,3 +1903,103 @@ quit__:
 	}
 }
 #endif
+
+QList<int> BrowserWidget2::get_study_rows(int row) const
+{
+	QList<int> result;
+	if (row < 0 || row >= tableWidget->rowCount())
+	{
+		return result;
+	}
+	const TableWidgetItem * targetItem = static_cast<const TableWidgetItem*>(tableWidget->item(row, 0));
+	const QString targetUid = targetItem ? targetItem->study_uid : QString();
+
+	const QTableWidgetItem * pItem = tableWidget->item(row, 3);
+	const QTableWidgetItem * sItem = tableWidget->item(row, 5);
+	const QTableWidgetItem * dItem = tableWidget->item(row, 6);
+	const QString patient = pItem ? pItem->text() : QString();
+	const QString studyDesc = sItem ? sItem->text() : QString();
+	const QString studyDate = dItem ? dItem->text() : QString();
+
+	for (int r = 0; r < tableWidget->rowCount(); ++r)
+	{
+		if (r == row)
+		{
+			result.append(r);
+			continue;
+		}
+		const TableWidgetItem * item = static_cast<const TableWidgetItem*>(tableWidget->item(r, 0));
+		if (!targetUid.isEmpty() && item && item->study_uid == targetUid)
+		{
+			result.append(r);
+		}
+		else if (targetUid.isEmpty() && (!patient.isEmpty() || !studyDesc.isEmpty() || !studyDate.isEmpty()))
+		{
+			const QTableWidgetItem * p = tableWidget->item(r, 3);
+			const QTableWidgetItem * s = tableWidget->item(r, 5);
+			const QTableWidgetItem * d = tableWidget->item(r, 6);
+			if ((!patient.isEmpty() ? (p && p->text() == patient) : true) &&
+				(!studyDesc.isEmpty() ? (s && s->text() == studyDesc) : true) &&
+				(!studyDate.isEmpty() ? (d && d->text() == studyDate) : true))
+			{
+				result.append(r);
+			}
+		}
+	}
+	return result;
+}
+
+void BrowserWidget2::select_study_rows(int row)
+{
+	if (row < 0 || row >= tableWidget->rowCount()) return;
+	const QList<int> rows = get_study_rows(row);
+	tableWidget->clearSelection();
+	QItemSelection itemSelection;
+	for (int r : rows)
+	{
+		QModelIndex idx0 = tableWidget->model()->index(r, 0);
+		QModelIndex idxLast = tableWidget->model()->index(r, tableWidget->columnCount() - 1);
+		itemSelection.select(idx0, idxLast);
+	}
+	tableWidget->selectionModel()->select(itemSelection, QItemSelectionModel::Select | QItemSelectionModel::Rows);
+	tableWidget->setCurrentCell(row, 0, QItemSelectionModel::NoUpdate);
+}
+
+bool BrowserWidget2::take_single_series_flag()
+{
+	const bool val = single_series_mode;
+	single_series_mode = false;
+	return val;
+}
+
+void BrowserWidget2::set_single_series_mode(bool s)
+{
+	single_series_mode = s;
+}
+
+void BrowserWidget2::show_context_menu(const QPoint & pos)
+{
+	QTableWidgetItem * it = tableWidget->itemAt(pos);
+	int row = it ? it->row() : tableWidget->currentRow();
+	if (row < 0 || row >= tableWidget->rowCount()) return;
+
+	QMenu menu(this);
+	QAction * actFull = menu.addAction(tr("Carregar Exame Completo (Todas as Séries)"));
+	QAction * actSingle = menu.addAction(tr("Carregar Apenas Esta Série"));
+
+	QAction * chosen = menu.exec(tableWidget->viewport()->mapToGlobal(pos));
+	if (chosen == actFull)
+	{
+		select_study_rows(row);
+		single_series_mode = false;
+		emit load_series_requested();
+	}
+	else if (chosen == actSingle)
+	{
+		tableWidget->clearSelection();
+		tableWidget->selectRow(row);
+		tableWidget->setCurrentCell(row, 0);
+		single_series_mode = true;
+		emit load_series_requested();
+	}
+}

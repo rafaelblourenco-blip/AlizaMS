@@ -26,6 +26,16 @@
 RadiantInputDispatcher::RadiantInputDispatcher(QObject * parent)
     : QObject(parent)
 {
+    throttle_timer = new QTimer(this);
+    throttle_timer->setSingleShot(true);
+    connect(throttle_timer, &QTimer::timeout, this, &RadiantInputDispatcher::dispatch_pending_slices);
+
+    m_wheel_idle_timer = new QTimer(this);
+    m_wheel_idle_timer->setSingleShot(true);
+    connect(m_wheel_idle_timer, &QTimer::timeout, this, [this]() {
+        m_wheel_accumulator_gw = 0;
+        m_wheel_accumulator_sgw = 0;
+    });
 }
 
 RadiantInputDispatcher * RadiantInputDispatcher::instance()
@@ -41,6 +51,108 @@ void RadiantInputDispatcher::set_tool(RadiantTool tool)
         current_tool = tool;
         emit tool_changed(tool);
     }
+}
+
+void RadiantInputDispatcher::queue_slice_step_gw(GraphicsWidget * gw, int steps)
+{
+    if (!gw || steps == 0) return;
+    if (pending_gw && pending_gw != gw)
+    {
+        dispatch_pending_slices();
+    }
+    pending_gw = gw;
+    pending_steps_gw += steps;
+    if (throttle_timer && !throttle_timer->isActive())
+    {
+        throttle_timer->start(16); // ~60Hz / 16ms VSync frame interval
+    }
+}
+
+void RadiantInputDispatcher::queue_slice_step_sgw(StudyGraphicsWidget * sgw, int steps)
+{
+    if (!sgw || steps == 0) return;
+    if (pending_sgw && pending_sgw != sgw)
+    {
+        dispatch_pending_slices();
+    }
+    pending_sgw = sgw;
+    pending_steps_sgw += steps;
+    if (throttle_timer && !throttle_timer->isActive())
+    {
+        throttle_timer->start(16); // ~60Hz / 16ms VSync frame interval
+    }
+}
+
+void RadiantInputDispatcher::dispatch_pending_slices()
+{
+    if (pending_gw && pending_steps_gw != 0)
+    {
+        if (pending_gw->slider_m && pending_gw->slider_m->slices_slider)
+        {
+            const int cur = pending_gw->slider_m->slices_slider->value();
+            const int max = pending_gw->slider_m->slices_slider->maximum();
+            int next = cur + pending_steps_gw;
+            if (next < 0) next = 0;
+            if (next > max) next = max;
+            pending_steps_gw = 0;
+            if (next != cur)
+            {
+                pending_gw->slider_m->set_slice(next);
+            }
+        }
+        else
+        {
+            pending_steps_gw = 0;
+        }
+        pending_gw = nullptr;
+    }
+    else
+    {
+        pending_steps_gw = 0;
+        pending_gw = nullptr;
+    }
+
+    if (pending_sgw && pending_steps_sgw != 0)
+    {
+        if (pending_sgw->get_slider())
+        {
+            const int cur = pending_sgw->get_slider()->value();
+            const int max = pending_sgw->get_slider()->maximum();
+            int next = cur + pending_steps_sgw;
+            if (next < 0) next = 0;
+            if (next > max) next = max;
+            pending_steps_sgw = 0;
+            if (next != cur)
+            {
+                pending_sgw->set_selected_slice(next);
+            }
+        }
+        else
+        {
+            pending_steps_sgw = 0;
+        }
+        pending_sgw = nullptr;
+    }
+    else
+    {
+        pending_steps_sgw = 0;
+        pending_sgw = nullptr;
+    }
+}
+
+void RadiantInputDispatcher::flush_pending_slices()
+{
+    if (throttle_timer && throttle_timer->isActive())
+    {
+        throttle_timer->stop();
+    }
+    if (m_wheel_idle_timer && m_wheel_idle_timer->isActive())
+    {
+        m_wheel_idle_timer->stop();
+    }
+    dispatch_pending_slices();
+    m_wheel_accumulator_gw = 0;
+    m_wheel_accumulator_sgw = 0;
 }
 
 // =========================================================================
@@ -179,16 +291,7 @@ bool RadiantInputDispatcher::handle_mouse_move(GraphicsView * view, QMouseEvent 
         {
             const int steps = -accumulated_browse_dy / step_px;
             accumulated_browse_dy %= step_px;
-
-            if (gw && gw->slider_m && gw->slider_m->slices_slider)
-            {
-                const int cur = gw->slider_m->slices_slider->value();
-                const int max = gw->slider_m->slices_slider->maximum();
-                int next = cur + steps;
-                if (next < 0) next = 0;
-                if (next > max) next = max;
-                gw->slider_m->set_slice(next);
-            }
+            queue_slice_step_gw(gw, steps);
         }
         return true;
     }
@@ -204,6 +307,7 @@ bool RadiantInputDispatcher::handle_mouse_release(GraphicsView * view, QMouseEve
     const DragAction prev = current_action;
     current_action = DragAction::None;
     accumulated_browse_dy = 0;
+    flush_pending_slices();
     return (prev != DragAction::None && prev != DragAction::MeasureLength);
 }
 
@@ -226,21 +330,30 @@ bool RadiantInputDispatcher::handle_wheel(GraphicsView * view, QWheelEvent * e, 
     }
     else
     {
-        // Normal Wheel: Advance / retrocede slice
+        // Normal Wheel: Coalesced, VSync-throttled slice navigation
 #if QT_VERSION >= QT_VERSION_CHECK(5,0,0)
         const int delta = e->angleDelta().y();
 #else
         const int delta = e->delta();
 #endif
-        const int step = (delta > 0) ? 1 : -1;
-        if (gw && gw->slider_m && gw->slider_m->slices_slider)
+        if (m_last_wheel_gw != gw)
         {
-            const int cur = gw->slider_m->slices_slider->value();
-            const int max = gw->slider_m->slices_slider->maximum();
-            int next = cur + step;
-            if (next < 0) next = 0;
-            if (next > max) next = max;
-            gw->slider_m->set_slice(next);
+            m_last_wheel_gw = gw;
+            m_wheel_accumulator_gw = 0;
+        }
+
+        m_wheel_accumulator_gw += delta;
+        if (m_wheel_idle_timer)
+        {
+            m_wheel_idle_timer->start(200);
+        }
+
+        const int threshold = 120;
+        if (std::abs(m_wheel_accumulator_gw) >= threshold)
+        {
+            const int steps = m_wheel_accumulator_gw / threshold;
+            m_wheel_accumulator_gw %= threshold;
+            queue_slice_step_gw(gw, steps);
         }
         return true;
     }
@@ -376,16 +489,7 @@ bool RadiantInputDispatcher::handle_study_mouse_move(StudyGraphicsView * view, Q
         {
             const int steps = -accumulated_browse_dy / step_px;
             accumulated_browse_dy %= step_px;
-
-            if (sgw && sgw->get_slider())
-            {
-                const int cur = sgw->get_slider()->value();
-                const int max = sgw->get_slider()->maximum();
-                int next = cur + steps;
-                if (next < 0) next = 0;
-                if (next > max) next = max;
-                sgw->set_selected_slice(next);
-            }
+            queue_slice_step_sgw(sgw, steps);
         }
         return true;
     }
@@ -401,6 +505,7 @@ bool RadiantInputDispatcher::handle_study_mouse_release(StudyGraphicsView * view
     const DragAction prev = current_action;
     current_action = DragAction::None;
     accumulated_browse_dy = 0;
+    flush_pending_slices();
     return (prev != DragAction::None && prev != DragAction::MeasureLength);
 }
 
@@ -427,15 +532,24 @@ bool RadiantInputDispatcher::handle_study_wheel(StudyGraphicsView * view, QWheel
 #else
         const int delta = e->delta();
 #endif
-        const int step = (delta > 0) ? 1 : -1;
-        if (sgw && sgw->get_slider())
+        if (m_last_wheel_sgw != sgw)
         {
-            const int cur = sgw->get_slider()->value();
-            const int max = sgw->get_slider()->maximum();
-            int next = cur + step;
-            if (next < 0) next = 0;
-            if (next > max) next = max;
-            sgw->set_selected_slice(next);
+            m_last_wheel_sgw = sgw;
+            m_wheel_accumulator_sgw = 0;
+        }
+
+        m_wheel_accumulator_sgw += delta;
+        if (m_wheel_idle_timer)
+        {
+            m_wheel_idle_timer->start(200);
+        }
+
+        const int threshold = 120;
+        if (std::abs(m_wheel_accumulator_sgw) >= threshold)
+        {
+            const int steps = m_wheel_accumulator_sgw / threshold;
+            m_wheel_accumulator_sgw %= threshold;
+            queue_slice_step_sgw(sgw, steps);
         }
         return true;
     }

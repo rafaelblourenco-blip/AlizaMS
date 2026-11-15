@@ -92,6 +92,13 @@ public:
 	void rotate_view(double);
 	void clear_measurements();
 	void delete_selected_measurement();
+	void reset_reference_line_angles();
+	double get_ref_angle_h() const { return m_ref_angle_h; }
+	double get_ref_angle_v() const { return m_ref_angle_v; }
+	void set_ref_angle_h(double a) { m_ref_angle_h = a; }
+	void set_ref_angle_v(double a) { m_ref_angle_v = a; }
+	bool is_rotating_ref_line() const { return m_is_rotating_ref_line; }
+	int check_ref_line_rotation_handle_hover(const QPoint & pos);
 
 public slots:
     void zoom_in();
@@ -135,6 +142,18 @@ private:
 	HandleItem * leftHandle;
 	HandleItem * rightHandle;
 	QColor shutter_color;
+	double m_ref_angle_h{0.0};
+	double m_ref_angle_v{0.0};
+	bool m_is_rotating_ref_line{false};
+	int m_hover_ref_line{0};
+	int m_hover_ref_end{0};
+	QPointF m_rotation_pivot_scene;
+	double m_initial_mouse_angle{0.0};
+	double m_start_rotation_angle{0.0};
+	QPointF m_handle_h1_scene;
+	QPointF m_handle_h2_scene;
+	QPointF m_handle_v1_scene;
+	QPointF m_handle_v2_scene;
 	void set_win_old_position(int, int);
 	void set_win_new_position(int, int);
 	void set_win_last_position(int, int);

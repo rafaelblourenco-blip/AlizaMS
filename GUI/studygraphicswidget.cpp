@@ -1284,8 +1284,13 @@ void StudyGraphicsWidget::leaveEvent(QEvent*)
 
 void StudyGraphicsWidget::dropEvent(QDropEvent * e)
 {
-	int i{-1};
 	const QMimeData * mimeData = e->mimeData();
+	if (mimeData && mimeData->hasUrls())
+	{
+		e->ignore();
+		return;
+	}
+	int i{-1};
 	// TODO distinguish other Qt apps?
 	if (mimeData && mimeData->hasFormat("application/x-qabstractitemmodeldatalist"))
 	{

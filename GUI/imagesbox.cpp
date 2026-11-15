@@ -173,7 +173,9 @@ ImagesBox::ImagesBox(float si)
 	//
 	actionInfo         = new QAction(QIcon(QString(":/bitmaps/info2.svg")),QString("Toggle info window"),this);
 	actionInfo->setCheckable(true);
-	actionInfo->setChecked(true);
+	actionInfo->setChecked(false);
+	textBrowser->hide();
+	update_dock_orientation(Qt::LeftDockWidgetArea);
 	//
 	listWidget->addAction(actionNone);
 	listWidget->addAction(actionCheck);
@@ -911,6 +913,33 @@ void ImagesBox::next_series()
 	if (cur < listWidget->count() - 1)
 		listWidget->setCurrentRow(cur + 1);
 }
+
+void ImagesBox::update_dock_orientation(Qt::DockWidgetArea area)
+{
+	if (area == Qt::TopDockWidgetArea || area == Qt::BottomDockWidgetArea)
+	{
+		setMinimumHeight(210);
+		setMaximumHeight(210);
+		setMinimumWidth(0);
+		setMaximumWidth(QWIDGETSIZE_MAX);
+		listWidget->setFlow(QListView::LeftToRight);
+		listWidget->setWrapping(false);
+		listWidget->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+		listWidget->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+	}
+	else
+	{
+		setMinimumWidth(210);
+		setMaximumWidth(210);
+		setMinimumHeight(0);
+		setMaximumHeight(QWIDGETSIZE_MAX);
+		listWidget->setFlow(QListView::TopToBottom);
+		listWidget->setWrapping(false);
+		listWidget->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+		listWidget->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+	}
+}
+
 
 
 

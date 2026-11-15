@@ -464,6 +464,123 @@ void GraphicsView::drawForeground(QPainter * painter, const QRectF & rect)
 	const int curWW = static_cast<int>(std::round(iv->di->us_window_width));
 	drawShadowRight(br_y, QString("WL: %1  WW: %2").arg(curWL).arg(curWW));
 
+	// Direct Measurement Values Beside Annotations:
+	// Screen-space styled text badge positioned directly adjacent to annotation midpoint offset along normal vector
+	QString measure_text;
+	if (parent && parent->measure_label && !parent->measure_label->text().isEmpty())
+	{
+		measure_text = parent->measure_label->text();
+	}
+
+	bool has_measurement = false;
+	QPointF p0_scene;
+	QPointF p1_scene;
+
+	if (m0_set && m1_set)
+	{
+		p0_scene = QPointF(m0_win_pos_x, m0_win_pos_y);
+		p1_scene = QPointF(m1_win_pos_x, m1_win_pos_y);
+		has_measurement = true;
+	}
+	else if (measurment_line && !measurment_line->path().isEmpty() &&
+	         measurment_line->path().elementCount() >= 2)
+	{
+		const QPainterPath::Element el0 = measurment_line->path().elementAt(0);
+		const QPainterPath::Element el1 = measurment_line->path().elementAt(1);
+		p0_scene = QPointF(el0.x, el0.y);
+		p1_scene = QPointF(el1.x, el1.y);
+		has_measurement = true;
+	}
+
+	if (has_measurement && !measure_text.isEmpty())
+	{
+		const QPointF p0_screen = mapFromScene(p0_scene);
+		const QPointF p1_screen = mapFromScene(p1_scene);
+		const QPointF mid_screen = (p0_screen + p1_screen) * 0.5;
+
+		const double dx = p1_screen.x() - p0_screen.x();
+		const double dy = p1_screen.y() - p0_screen.y();
+		const double length = std::hypot(dx, dy);
+
+		QPointF normal(0.0, -1.0);
+		if (length > 1e-4)
+		{
+			normal = QPointF(-dy / length, dx / length);
+			if (normal.y() > 0.0)
+			{
+				normal = -normal;
+			}
+		}
+
+		const double normal_offset = 18.0;
+		const QPointF badge_center = mid_screen + normal * normal_offset;
+
+		QFont badge_font("Segoe UI", 9, QFont::Bold);
+		painter->setFont(badge_font);
+		const QFontMetrics fm(badge_font);
+#if QT_VERSION >= QT_VERSION_CHECK(5, 11, 0)
+		const int text_w = fm.horizontalAdvance(measure_text);
+#else
+		const int text_w = fm.width(measure_text);
+#endif
+		const int text_h = fm.height();
+		const int pad_x = 8;
+		const int pad_y = 4;
+		const int badge_w = text_w + 2 * pad_x;
+		const int badge_h = text_h + 2 * pad_y;
+
+		QRectF badge_rect(badge_center.x() - badge_w / 2.0, badge_center.y() - badge_h / 2.0, badge_w, badge_h);
+
+		if (badge_rect.left() < vr.left() + 4) badge_rect.moveLeft(vr.left() + 4);
+		if (badge_rect.right() > vr.right() - 4) badge_rect.moveRight(vr.right() - 4);
+		if (badge_rect.top() < vr.top() + 4) badge_rect.moveTop(vr.top() + 4);
+		if (badge_rect.bottom() > vr.bottom() - 4) badge_rect.moveBottom(vr.bottom() - 4);
+
+		painter->setRenderHint(QPainter::Antialiasing, true);
+
+		// Rounded translucent dark badge (#071728 with 80% opacity)
+		const QColor badge_bg(7, 23, 40, 204);
+		// Crisp cyan/white contrast border (#38BDF8)
+		const QColor badge_border(56, 189, 248);
+		const QPen border_pen(badge_border, 1.5);
+		painter->setPen(border_pen);
+		painter->setBrush(QBrush(badge_bg));
+		painter->drawRoundedRect(badge_rect, 4.0, 4.0);
+
+		// Crisp white Segoe UI measurement text
+		painter->setPen(QColor(255, 255, 255));
+		painter->drawText(badge_rect, Qt::AlignCenter, measure_text);
+	}
+
+	// 4. MPR Reference Line Rotation Handles
+	if (parent && parent->image_container.image3D)
+	{
+		auto drawRotationHandle = [&](const QPointF & scenePos, bool isHovered) {
+			if (scenePos.isNull()) return;
+			const QPointF pt = mapFromScene(scenePos);
+			if (!vr.contains(pt.toPoint())) return;
+
+			painter->setRenderHint(QPainter::Antialiasing, true);
+			if (isHovered)
+			{
+				painter->setPen(QPen(QColor(56, 189, 248), 2.0)); // #38BDF8
+				painter->setBrush(QBrush(QColor(14, 165, 233, 220)));
+				painter->drawEllipse(pt, 5.5, 5.5);
+			}
+			else
+			{
+				painter->setPen(QPen(QColor(255, 255, 255, 220), 1.5));
+				painter->setBrush(QBrush(QColor(7, 23, 40, 200)));
+				painter->drawEllipse(pt, 4.0, 4.0);
+			}
+		};
+
+		if (!m_handle_h1_scene.isNull()) drawRotationHandle(m_handle_h1_scene, m_hover_ref_line == 1 && m_hover_ref_end == 1);
+		if (!m_handle_h2_scene.isNull()) drawRotationHandle(m_handle_h2_scene, m_hover_ref_line == 1 && m_hover_ref_end == 2);
+		if (!m_handle_v1_scene.isNull()) drawRotationHandle(m_handle_v1_scene, m_hover_ref_line == 2 && m_hover_ref_end == 1);
+		if (!m_handle_v2_scene.isNull()) drawRotationHandle(m_handle_v2_scene, m_hover_ref_line == 2 && m_hover_ref_end == 2);
+	}
+
 	painter->restore();
 }
 
@@ -673,6 +790,19 @@ void GraphicsView::mousePressEvent(QMouseEvent * e)
 		return;
 	}
 
+	if (e->button() == Qt::LeftButton && (m_hover_ref_line > 0 || (check_ref_line_rotation_handle_hover(e->pos()) > 0)))
+	{
+		int handle = (m_hover_ref_line > 0) ? ((m_hover_ref_line == 1) ? 1 : 3) : check_ref_line_rotation_handle_hover(e->pos());
+		m_hover_ref_line = (handle <= 2) ? 1 : 2;
+		m_hover_ref_end = (handle % 2 == 1) ? 1 : 2;
+		m_is_rotating_ref_line = true;
+		QPointF pivotScreen = mapFromScene(m_rotation_pivot_scene);
+		m_initial_mouse_angle = std::atan2(e->pos().y() - pivotScreen.y(), e->pos().x() - pivotScreen.x());
+		m_start_rotation_angle = (m_hover_ref_line == 1) ? m_ref_angle_h : m_ref_angle_v;
+		setCursor(Qt::PointingHandCursor);
+		return;
+	}
+
 	if (e->button() == Qt::LeftButton && parent->get_mouse_modus() == 1)
 	{
 		const QPoint p0 = e->pos();
@@ -725,6 +855,43 @@ void GraphicsView::mouseReleaseEvent(QMouseEvent * e)
 		return;
 	}
 
+	if (m_is_rotating_ref_line)
+	{
+		m_is_rotating_ref_line = false;
+		GraphicsWidget * targetWidget = nullptr;
+		short targetPlane = 0;
+		double angleToApply = (m_hover_ref_line == 1) ? m_ref_angle_h : m_ref_angle_v;
+
+		if (parent->get_axis() == 2)
+		{
+			targetWidget = (m_hover_ref_line == 1) ? widget_y : widget_x;
+			targetPlane = (m_hover_ref_line == 1) ? 1 : 0;
+		}
+		else if (parent->get_axis() == 1)
+		{
+			targetWidget = (m_hover_ref_line == 1) ? widget_m : widget_x;
+			targetPlane = (m_hover_ref_line == 1) ? 2 : 0;
+		}
+		else
+		{
+			targetWidget = (m_hover_ref_line == 1) ? widget_m : widget_y;
+			targetPlane = (m_hover_ref_line == 1) ? 2 : 1;
+		}
+
+		if (targetWidget && parent->image_container.image3D)
+		{
+			targetWidget->set_oblique_slice_2D(
+				parent->image_container.image3D,
+				angleToApply,
+				targetPlane,
+				false /* diagnostic Linear interpolation */);
+		}
+		m_hover_ref_line = 0;
+		m_hover_ref_end = 0;
+		unsetCursor();
+		return;
+	}
+
 	if (e->button() == Qt::LeftButton && parent->get_mouse_modus() == 1)
 	{
 		const QPoint p0 = e->pos();
@@ -774,6 +941,70 @@ void GraphicsView::mouseMoveEvent(QMouseEvent * e)
 			}
 		}
 		measure();
+		return;
+	}
+
+	if (!m_is_rotating_ref_line)
+	{
+		int handle = check_ref_line_rotation_handle_hover(e->pos());
+		if (handle > 0)
+		{
+			m_hover_ref_line = (handle <= 2) ? 1 : 2;
+			m_hover_ref_end = (handle % 2 == 1) ? 1 : 2;
+			setCursor(Qt::PointingHandCursor);
+		}
+		else if (m_hover_ref_line > 0)
+		{
+			m_hover_ref_line = 0;
+			m_hover_ref_end = 0;
+			unsetCursor();
+		}
+	}
+
+	if ((e->buttons() & Qt::LeftButton) && m_is_rotating_ref_line)
+	{
+		QPointF pivotScreen = mapFromScene(m_rotation_pivot_scene);
+		double curAngle = std::atan2(e->pos().y() - pivotScreen.y(), e->pos().x() - pivotScreen.x());
+		double deltaAngle = curAngle - m_initial_mouse_angle;
+		double newAngle = m_start_rotation_angle + deltaAngle;
+		while (newAngle > M_PI) newAngle -= 2.0 * M_PI;
+		while (newAngle < -M_PI) newAngle += 2.0 * M_PI;
+
+		if (m_hover_ref_line == 1)
+			m_ref_angle_h = newAngle;
+		else
+			m_ref_angle_v = newAngle;
+
+		draw_frames(parent->get_axis());
+
+		GraphicsWidget * targetWidget = nullptr;
+		short targetPlane = 0;
+		double angleToApply = (m_hover_ref_line == 1) ? m_ref_angle_h : m_ref_angle_v;
+
+		if (parent->get_axis() == 2)
+		{
+			targetWidget = (m_hover_ref_line == 1) ? widget_y : widget_x;
+			targetPlane = (m_hover_ref_line == 1) ? 1 : 0;
+		}
+		else if (parent->get_axis() == 1)
+		{
+			targetWidget = (m_hover_ref_line == 1) ? widget_m : widget_x;
+			targetPlane = (m_hover_ref_line == 1) ? 2 : 0;
+		}
+		else
+		{
+			targetWidget = (m_hover_ref_line == 1) ? widget_m : widget_y;
+			targetPlane = (m_hover_ref_line == 1) ? 2 : 1;
+		}
+
+		if (targetWidget && parent->image_container.image3D)
+		{
+			targetWidget->set_oblique_slice_2D(
+				parent->image_container.image3D,
+				angleToApply,
+				targetPlane,
+				true /* fastDraftMode */);
+		}
 		return;
 	}
 
@@ -839,76 +1070,145 @@ void GraphicsView::update_background_color()
 void GraphicsView::draw_frames(short a)
 {
 	if (!parent->image_container.image3D) return;
+	const double W = parent->image_container.image2D ? static_cast<double>(parent->image_container.image2D->idimx) : 512.0;
+	const double H = parent->image_container.image2D ? static_cast<double>(parent->image_container.image2D->idimy) : 512.0;
+	const double L = std::max(W, H) * 2.0;
+	const double D_handle = std::max(30.0, std::min(W, H) * 0.45);
+
 	switch (a)
 	{
 	case 0:
 		{
-			QPainterPath path_x_line;
-			line_x->setPath(path_x_line);
+			const double Cx = parent->image_container.image3D->di->selected_y_slice + 0.5;
+			const double Cy = parent->image_container.image3D->di->selected_z_slice + 0.5;
+			m_rotation_pivot_scene = QPointF(Cx, Cy);
+
+			const double cosV = std::cos(m_ref_angle_v);
+			const double sinV = std::sin(m_ref_angle_v);
 			QPainterPath path_y_line;
-			path_y_line.moveTo(
-				parent->image_container.image3D->di->selected_y_slice + 0.5,
-				0);
-			path_y_line.lineTo(
-				parent->image_container.image3D->di->selected_y_slice + 0.5,
-				parent->image_container.image2D->idimy);
+			path_y_line.moveTo(Cx + L * sinV, Cy - L * cosV);
+			path_y_line.lineTo(Cx - L * sinV, Cy + L * cosV);
+			m_handle_v1_scene = QPointF(Cx + D_handle * sinV, Cy - D_handle * cosV);
+			m_handle_v2_scene = QPointF(Cx - D_handle * sinV, Cy + D_handle * cosV);
+			path_y_line.addEllipse(m_handle_v1_scene, 4.0, 4.0);
+			path_y_line.addEllipse(m_handle_v2_scene, 4.0, 4.0);
 			line_y->setPath(path_y_line);
+
+			const double cosH = std::cos(m_ref_angle_h);
+			const double sinH = std::sin(m_ref_angle_h);
 			QPainterPath path_z_line;
-			path_z_line.moveTo(
-				0,
-				parent->image_container.image3D->di->selected_z_slice + 0.5);
-			path_z_line.lineTo(
-				parent->image_container.image2D->idimx,
-				parent->image_container.image3D->di->selected_z_slice + 0.5);
+			path_z_line.moveTo(Cx - L * cosH, Cy - L * sinH);
+			path_z_line.lineTo(Cx + L * cosH, Cy + L * sinH);
+			m_handle_h1_scene = QPointF(Cx - D_handle * cosH, Cy - D_handle * sinH);
+			m_handle_h2_scene = QPointF(Cx + D_handle * cosH, Cy + D_handle * sinH);
+			path_z_line.addEllipse(m_handle_h1_scene, 4.0, 4.0);
+			path_z_line.addEllipse(m_handle_h2_scene, 4.0, 4.0);
 			line_z->setPath(path_z_line);
+
+			QPainterPath empty_path;
+			line_x->setPath(empty_path);
 		}
 		break;
 	case 1:
 		{
+			const double Cx = parent->image_container.image3D->di->selected_x_slice + 0.5;
+			const double Cy = parent->image_container.image3D->di->selected_z_slice + 0.5;
+			m_rotation_pivot_scene = QPointF(Cx, Cy);
+
+			const double cosV = std::cos(m_ref_angle_v);
+			const double sinV = std::sin(m_ref_angle_v);
 			QPainterPath path_x_line;
-			path_x_line.moveTo(
-				parent->image_container.image3D->di->selected_x_slice + 0.5,
-				0);
-			path_x_line.lineTo(
-				parent->image_container.image3D->di->selected_x_slice + 0.5,
-				parent->image_container.image2D->idimy);
+			path_x_line.moveTo(Cx + L * sinV, Cy - L * cosV);
+			path_x_line.lineTo(Cx - L * sinV, Cy + L * cosV);
+			m_handle_v1_scene = QPointF(Cx + D_handle * sinV, Cy - D_handle * cosV);
+			m_handle_v2_scene = QPointF(Cx - D_handle * sinV, Cy + D_handle * cosV);
+			path_x_line.addEllipse(m_handle_v1_scene, 4.0, 4.0);
+			path_x_line.addEllipse(m_handle_v2_scene, 4.0, 4.0);
 			line_x->setPath(path_x_line);
-			QPainterPath path_y_line;
-			line_y->setPath(path_y_line);
+
+			const double cosH = std::cos(m_ref_angle_h);
+			const double sinH = std::sin(m_ref_angle_h);
 			QPainterPath path_z_line;
-			path_z_line.moveTo(
-				0,
-				parent->image_container.image3D->di->selected_z_slice + 0.5);
-			path_z_line.lineTo(
-				parent->image_container.image2D->idimx,
-				parent->image_container.image3D->di->selected_z_slice + 0.5);
+			path_z_line.moveTo(Cx - L * cosH, Cy - L * sinH);
+			path_z_line.lineTo(Cx + L * cosH, Cy + L * sinH);
+			m_handle_h1_scene = QPointF(Cx - D_handle * cosH, Cy - D_handle * sinH);
+			m_handle_h2_scene = QPointF(Cx + D_handle * cosH, Cy + D_handle * sinH);
+			path_z_line.addEllipse(m_handle_h1_scene, 4.0, 4.0);
+			path_z_line.addEllipse(m_handle_h2_scene, 4.0, 4.0);
 			line_z->setPath(path_z_line);
+
+			QPainterPath empty_path;
+			line_y->setPath(empty_path);
 		}
 		break;
 	case 2:
 		{
+			const double Cx = parent->image_container.image3D->di->selected_x_slice + 0.5;
+			const double Cy = parent->image_container.image3D->di->selected_y_slice + 0.5;
+			m_rotation_pivot_scene = QPointF(Cx, Cy);
+
+			const double cosV = std::cos(m_ref_angle_v);
+			const double sinV = std::sin(m_ref_angle_v);
 			QPainterPath path_x_line;
-			path_x_line.moveTo(
-				parent->image_container.image3D->di->selected_x_slice + 0.5,
-				0);
-			path_x_line.lineTo(
-				parent->image_container.image3D->di->selected_x_slice + 0.5,
-				parent->image_container.image2D->idimy);
+			path_x_line.moveTo(Cx + L * sinV, Cy - L * cosV);
+			path_x_line.lineTo(Cx - L * sinV, Cy + L * cosV);
+			m_handle_v1_scene = QPointF(Cx + D_handle * sinV, Cy - D_handle * cosV);
+			m_handle_v2_scene = QPointF(Cx - D_handle * sinV, Cy + D_handle * cosV);
+			path_x_line.addEllipse(m_handle_v1_scene, 4.0, 4.0);
+			path_x_line.addEllipse(m_handle_v2_scene, 4.0, 4.0);
 			line_x->setPath(path_x_line);
+
+			const double cosH = std::cos(m_ref_angle_h);
+			const double sinH = std::sin(m_ref_angle_h);
 			QPainterPath path_y_line;
-			path_y_line.moveTo(
-				0,
-				parent->image_container.image3D->di->selected_y_slice + 0.5);
-			path_y_line.lineTo(
-				parent->image_container.image2D->idimx,
-				parent->image_container.image3D->di->selected_y_slice + 0.5);
+			path_y_line.moveTo(Cx - L * cosH, Cy - L * sinH);
+			path_y_line.lineTo(Cx + L * cosH, Cy + L * sinH);
+			m_handle_h1_scene = QPointF(Cx - D_handle * cosH, Cy - D_handle * sinH);
+			m_handle_h2_scene = QPointF(Cx + D_handle * cosH, Cy + D_handle * sinH);
+			path_y_line.addEllipse(m_handle_h1_scene, 4.0, 4.0);
+			path_y_line.addEllipse(m_handle_h2_scene, 4.0, 4.0);
 			line_y->setPath(path_y_line);
-			QPainterPath path_z_line;
-			line_z->setPath(path_z_line);
+
+			QPainterPath empty_path;
+			line_z->setPath(empty_path);
 		}
 		break;
 	default:
 		break;
+	}
+}
+
+int GraphicsView::check_ref_line_rotation_handle_hover(const QPoint & pos)
+{
+	if (!parent || !parent->image_container.image3D) return 0;
+	const double radius = 10.0;
+
+	QPointF s_h1 = mapFromScene(m_handle_h1_scene);
+	if (std::hypot(pos.x() - s_h1.x(), pos.y() - s_h1.y()) <= radius) return 1;
+
+	QPointF s_h2 = mapFromScene(m_handle_h2_scene);
+	if (std::hypot(pos.x() - s_h2.x(), pos.y() - s_h2.y()) <= radius) return 2;
+
+	QPointF s_v1 = mapFromScene(m_handle_v1_scene);
+	if (std::hypot(pos.x() - s_v1.x(), pos.y() - s_v1.y()) <= radius) return 3;
+
+	QPointF s_v2 = mapFromScene(m_handle_v2_scene);
+	if (std::hypot(pos.x() - s_v2.x(), pos.y() - s_v2.y()) <= radius) return 4;
+
+	return 0;
+}
+
+void GraphicsView::reset_reference_line_angles()
+{
+	m_ref_angle_h = 0.0;
+	m_ref_angle_v = 0.0;
+	m_is_rotating_ref_line = false;
+	m_hover_ref_line = 0;
+	m_hover_ref_end = 0;
+	unsetCursor();
+	if (parent && parent->image_container.image3D)
+	{
+		draw_frames(parent->get_axis());
 	}
 }
 
@@ -998,8 +1298,12 @@ void GraphicsView::set_empty_lines()
 
 void GraphicsView::set_empty_distance()
 {
+	m0_set = false;
+	m1_set = false;
 	QPainterPath path___;
 	measurment_line->setPath(path___);
+	if (viewport())
+		viewport()->update();
 }
 
 void GraphicsView::set_widget_m(GraphicsWidget * w)
@@ -1177,6 +1481,8 @@ void GraphicsView::measure()
 	{
 		parent->set_measure_text("");
 	}
+	if (viewport())
+		viewport()->update();
 }
 
 void GraphicsView::get_pixel_value(double x, double y)
@@ -2153,7 +2459,10 @@ void GraphicsView::rotate_view(double angle)
 
 void GraphicsView::clear_measurements()
 {
+	set_empty_distance();
 	clear_collision_paths();
+	if (parent)
+		parent->set_measure_text(QString(""));
 	if (viewport())
 		viewport()->update();
 }

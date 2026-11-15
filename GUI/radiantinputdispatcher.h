@@ -6,6 +6,8 @@
 #include <QPointF>
 #include <QMouseEvent>
 #include <QWheelEvent>
+#include <QPointer>
+#include <QTimer>
 
 class GraphicsView;
 class StudyGraphicsView;
@@ -69,12 +71,21 @@ public:
     bool handle_gl_mouse_release(GLWidget * glw, QMouseEvent * e, Aliza * aliza);
     bool handle_gl_wheel(GLWidget * glw, QWheelEvent * e, Aliza * aliza);
 
+    // Event coalescing and slice throttling
+    void flush_pending_slices();
+
 signals:
     void tool_changed(RadiantTool tool);
+
+private slots:
+    void dispatch_pending_slices();
 
 private:
     explicit RadiantInputDispatcher(QObject * parent = nullptr);
     ~RadiantInputDispatcher() override = default;
+
+    void queue_slice_step_gw(GraphicsWidget * gw, int steps);
+    void queue_slice_step_sgw(StudyGraphicsWidget * sgw, int steps);
 
     RadiantTool current_tool{RadiantTool::Browse};
     DragAction current_action{DragAction::None};
@@ -83,6 +94,17 @@ private:
     int accumulated_browse_dy{0};
     int gl_pan_last_x{0};
     int gl_pan_last_y{0};
+
+    QTimer * throttle_timer{nullptr};
+    QTimer * m_wheel_idle_timer{nullptr};
+    QPointer<GraphicsWidget> pending_gw;
+    QPointer<StudyGraphicsWidget> pending_sgw;
+    QPointer<GraphicsWidget> m_last_wheel_gw;
+    QPointer<StudyGraphicsWidget> m_last_wheel_sgw;
+    int pending_steps_gw{0};
+    int pending_steps_sgw{0};
+    int m_wheel_accumulator_gw{0};
+    int m_wheel_accumulator_sgw{0};
 };
 
 #endif // RADIANTINPUTDISPATCHER_H

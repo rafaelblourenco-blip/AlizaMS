@@ -214,6 +214,9 @@ void RadiantShortcutsManager::create_radiant_toolbar(QToolBar * parentToolbar)
     QAction * actAnonToggle = textMenu->addAction(QString("Modo Anônimo / Ocultar identificação (Shift+F12)"));
     connect(actAnonToggle, SIGNAL(triggered()), this, SLOT(toggle_patient_id_hud()));
     textMenu->addSeparator();
+    QAction * actDeidentify = textMenu->addAction(QString("Desidentificar"));
+    connect(actDeidentify, SIGNAL(triggered()), this, SLOT(trigger_deidentify()));
+    textMenu->addSeparator();
     QAction * actConfigHud = textMenu->addAction(QString("Configurar atributos exibidos..."));
     connect(actConfigHud, SIGNAL(triggered()), this, SLOT(trigger_config_dialog()));
     createMenuButton(action_text_overlay, textMenu, false);
@@ -371,6 +374,11 @@ void RadiantShortcutsManager::create_radiant_toolbar(QToolBar * parentToolbar)
 
     radiant_toolbar->addSeparator();
 
+    // 17. Metadados DICOM
+    action_dicom_meta = new QAction(QIcon(":/bitmaps/meta.svg"), QString("Metadados DICOM"), this);
+    connect(action_dicom_meta, SIGNAL(triggered()), this, SLOT(trigger_dicom_metadata()));
+    radiant_toolbar->addAction(action_dicom_meta);
+
     // 18. Ajuda
     action_help = new QAction(QIcon(":/bitmaps/radiant_help.svg"), QString("Ajuda e Guia do Usuário"), this);
     connect(action_help, SIGNAL(triggered()), this, SLOT(trigger_help_dialog()));
@@ -379,7 +387,10 @@ void RadiantShortcutsManager::create_radiant_toolbar(QToolBar * parentToolbar)
     // 19. Configuração
     action_config = new QAction(QIcon(":/bitmaps/radiant_config.svg"), QString("Configurações do Sistema"), this);
     connect(action_config, SIGNAL(triggered()), this, SLOT(trigger_config_dialog()));
-    radiant_toolbar->addAction(action_config);
+    QMenu * configMenu = new QMenu(radiant_toolbar);
+    configMenu->addAction(QString("Configurações Gerais..."), this, SLOT(trigger_config_dialog()));
+    configMenu->addAction(QString("Configurações Avançadas do Sistema..."), this, SLOT(trigger_settings_tab()));
+    createMenuButton(action_config, configMenu, false);
 
     // Default active tool: Browse
     RadiantInputDispatcher::instance()->set_tool(RadiantTool::Browse);
@@ -464,26 +475,31 @@ void RadiantShortcutsManager::set_grid_layout(int rows, int cols)
 
 void RadiantShortcutsManager::select_tool_browse()
 {
+    if (mw) mw->set_image_view();
     RadiantInputDispatcher::instance()->set_tool(RadiantTool::Browse);
 }
 
 void RadiantShortcutsManager::select_tool_wl()
 {
+    if (mw) mw->set_image_view();
     RadiantInputDispatcher::instance()->set_tool(RadiantTool::WindowLevel);
 }
 
 void RadiantShortcutsManager::select_tool_pan()
 {
+    if (mw) mw->set_image_view();
     RadiantInputDispatcher::instance()->set_tool(RadiantTool::Pan);
 }
 
 void RadiantShortcutsManager::select_tool_zoom()
 {
+    if (mw) mw->set_image_view();
     RadiantInputDispatcher::instance()->set_tool(RadiantTool::Zoom);
 }
 
 void RadiantShortcutsManager::select_tool_length()
 {
+    if (mw) mw->set_image_view();
     RadiantInputDispatcher::instance()->set_tool(RadiantTool::Length);
     if (mw && mw->distanceAct) mw->distanceAct->setChecked(true);
 }
@@ -939,7 +955,7 @@ void RadiantShortcutsManager::trigger_mpr_window()
     {
         mpr_window = new RadiantOverlayWindow(
             QString("MPR - Reformatação Multiplanar Ortogonal"),
-            mw->multi_frame, mw);
+            mw->multi_frame, mw, RadiantOverlayWindow::OverlayType::MPR);
         connect(mpr_window, SIGNAL(window_closed()), this, SLOT(on_mpr_window_closed()));
     }
 
@@ -972,7 +988,7 @@ void RadiantShortcutsManager::trigger_3d_vr_window()
     {
         vr_3d_window = new RadiantOverlayWindow(
             QString("Renderização 3D - Reconstrução Tridimensional (GPU)"),
-            mw->gl_frame, mw);
+            mw->gl_frame, mw, RadiantOverlayWindow::OverlayType::VR_3D);
         connect(vr_3d_window, SIGNAL(window_closed()), this, SLOT(on_3d_window_closed()));
     }
 
@@ -1012,6 +1028,30 @@ void RadiantShortcutsManager::trigger_config_dialog()
     if (!mw) return;
     RadiantConfigDialog dlg(mw, mw);
     dlg.exec();
+}
+
+void RadiantShortcutsManager::trigger_deidentify()
+{
+    if (mw)
+    {
+        mw->toggle_deidentify();
+    }
+}
+
+void RadiantShortcutsManager::trigger_dicom_metadata()
+{
+    if (mw)
+    {
+        mw->trigger_image_dicom_meta();
+    }
+}
+
+void RadiantShortcutsManager::trigger_settings_tab()
+{
+    if (mw)
+    {
+        mw->toggle_settingswidget();
+    }
 }
 
 // ROIs deletion

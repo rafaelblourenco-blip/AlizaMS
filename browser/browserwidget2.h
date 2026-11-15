@@ -5,6 +5,8 @@
 #include <QApplication>
 #include <QWidget>
 #include <QModelIndex>
+#include <QPoint>
+#include <QList>
 #include <QDropEvent>
 #include <QDragEnterEvent>
 #include <QDragMoveEvent>
@@ -83,6 +85,7 @@ public:
 		: QTableWidgetItem(s, QTableWidgetItem::UserType + 1) {}
 	~TableWidgetItem() = default;
 	QStringList files;
+	QString study_uid;
 };
 
 class BrowserWidget2: public QWidget, public Ui::BrowserWidget2
@@ -96,6 +99,13 @@ public:
 	QStringList   get_files_of_1st();
 	void          writeSettings(QSettings&);
 	QString       get_root() const;
+	QList<int>    get_study_rows(int row) const;
+	void          select_study_rows(int row);
+	bool          take_single_series_flag();
+	void          set_single_series_mode(bool s);
+
+signals:
+	void          load_series_requested();
 
 protected:
 	void closeEvent(QCloseEvent*) override;
@@ -162,8 +172,12 @@ private:
 		const QString &,
 		QString&,QString&,QString&,
 		QString&,QString&,QString&,QString&,
+		QString&,
 		bool*,bool*);
 	void read_tags_short_(const QString&, bool*, bool*);
+private slots:
+	void show_context_menu(const QPoint & pos);
+private:
 #ifdef USE_WORKSTATION_MODE
 	QString ctk_dir;
 	QString ctk_pname;
@@ -173,6 +187,7 @@ private:
 	bool    ctk_apply_range;
 #endif
 	QShortcut * refresh_sc;
+	bool        single_series_mode{false};
 };
 
 #endif

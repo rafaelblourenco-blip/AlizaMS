@@ -17,6 +17,7 @@
 #include <QColorDialog>
 #include <QDateTime>
 #include <QEventLoop>
+#include <QPointer>
 #include <string>
 #include <array>
 #ifdef ALIZA_PERF_COLLISION
@@ -321,6 +322,43 @@ void add_slice_collision_plane(
 	o->setUserPointer(usrP);
 	tmp_objects.push_back(o);
 	g_collisionWorld->addCollisionObject(o);
+}
+
+void check_slice_collisions(const ImageVariant * v, GraphicsWidget * w);
+
+static QTimer * s_collision_debounce_timer = nullptr;
+static const ImageVariant * s_pending_collision_v = nullptr;
+static QPointer<GraphicsWidget> s_pending_collision_w;
+
+void cancel_collision_debounce()
+{
+	if (s_collision_debounce_timer && s_collision_debounce_timer->isActive())
+	{
+		s_collision_debounce_timer->stop();
+	}
+	s_pending_collision_v = nullptr;
+	s_pending_collision_w = nullptr;
+}
+
+static void debounce_check_slice_collisions(const ImageVariant * v, GraphicsWidget * w, int delayMs = 120)
+{
+	s_pending_collision_v = v;
+	s_pending_collision_w = w;
+	if (!s_collision_debounce_timer)
+	{
+		s_collision_debounce_timer = new QTimer(qApp);
+		s_collision_debounce_timer->setSingleShot(true);
+		QObject::connect(s_collision_debounce_timer, &QTimer::timeout, []() {
+			if (s_pending_collision_w && s_pending_collision_v &&
+			    s_pending_collision_w->image_container.image3D == s_pending_collision_v)
+			{
+				check_slice_collisions(s_pending_collision_v, s_pending_collision_w.data());
+			}
+			s_pending_collision_v = nullptr;
+			s_pending_collision_w = nullptr;
+		});
+	}
+	s_collision_debounce_timer->start(delayMs);
 }
 
 void check_slice_collisions(const ImageVariant * v, GraphicsWidget * w)
@@ -701,12 +739,14 @@ Aliza::Aliza()
 
 Aliza::~Aliza()
 {
+	cancel_collision_debounce();
 	if (anim3D_timer->isActive()) anim3D_timer->stop();
 	delete anim3D_timer;
 }
 
 void Aliza::close_()
 {
+	cancel_collision_debounce();
 	const bool ok3d = check_3d();
 	if (ok3d) glwidget->set_skip_draw(true);
 	stop_anim();
@@ -977,6 +1017,7 @@ void Aliza::add_histogram(ImageVariant * v, QProgressDialog * pb)
 
 void Aliza::clear_ram()
 {
+	cancel_collision_debounce();
 	if (lock0) return;
 	lock0 = true;
 	const bool ok3d = check_3d();
@@ -1021,6 +1062,7 @@ void Aliza::clear_ram()
 
 void Aliza::delete_image()
 {
+	cancel_collision_debounce();
 	ImageVariant * ivariant{};
 	QListWidgetItem * item__{};
 	if (lock0) return;
@@ -2027,9 +2069,9 @@ void Aliza::set_selected_slice2D_m(int j)
 			graphicswidget_m->set_slice_2D(v, 0, true, frame_level_available);
 			if (!run__)
 			{
-				check_slice_collisions(
+				debounce_check_slice_collisions(
 					const_cast<const ImageVariant *>(v),
-					graphicswidget_m);
+					graphicswidget_m, 120);
 			}
 			if (a == 2 && v->di->lock_2Dview)
 			{
@@ -2788,6 +2830,7 @@ void Aliza::update_selection_common2(QListWidgetItem * s)
 
 void Aliza::clear_views()
 {
+	cancel_collision_debounce();
 	update_toolbox(nullptr);
 	imagesbox->set_html(nullptr);
 	clear_contourstable();
@@ -4197,6 +4240,7 @@ quit__:
 
 void Aliza::delete_checked_unchecked(bool t)
 {
+	cancel_collision_debounce();
 	QList<QListWidgetItem *> items;
 	QList<int> image_ids;
 	if (lock0) return;
@@ -4276,6 +4320,7 @@ quit__:
 
 void Aliza::delete_group(const int group_id)
 {
+	cancel_collision_debounce();
 	QList<QListWidgetItem *> items;
 	QList<int> image_ids;
 	for (int x = 0; x < imagesbox->listWidget->count(); ++x)

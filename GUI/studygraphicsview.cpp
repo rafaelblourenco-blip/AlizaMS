@@ -351,6 +351,94 @@ void StudyGraphicsView::drawForeground(QPainter * painter, const QRectF & rect)
 	const int curWW = static_cast<int>(std::round(iv->di->us_window_width));
 	drawShadowRight(br_y, QString("WL: %1  WW: %2").arg(curWL).arg(curWW));
 
+	// Direct Measurement Values Beside Annotations:
+	// Screen-space styled text badge positioned directly adjacent to annotation midpoint offset along normal vector
+	QString measure_text;
+	if (parent && parent->measure_label && !parent->measure_label->text().isEmpty())
+	{
+		measure_text = parent->measure_label->text();
+	}
+
+	bool has_measurement = false;
+	QPointF p0_scene;
+	QPointF p1_scene;
+
+	if (m0_set && m1_set)
+	{
+		p0_scene = QPointF(m0_win_pos_x, m0_win_pos_y);
+		p1_scene = QPointF(m1_win_pos_x, m1_win_pos_y);
+		has_measurement = true;
+	}
+	else if (measurment_line && !measurment_line->path().isEmpty() &&
+	         measurment_line->path().elementCount() >= 2)
+	{
+		const QPainterPath::Element el0 = measurment_line->path().elementAt(0);
+		const QPainterPath::Element el1 = measurment_line->path().elementAt(1);
+		p0_scene = QPointF(el0.x, el0.y);
+		p1_scene = QPointF(el1.x, el1.y);
+		has_measurement = true;
+	}
+
+	if (has_measurement && !measure_text.isEmpty())
+	{
+		const QPointF p0_screen = mapFromScene(p0_scene);
+		const QPointF p1_screen = mapFromScene(p1_scene);
+		const QPointF mid_screen = (p0_screen + p1_screen) * 0.5;
+
+		const double dx = p1_screen.x() - p0_screen.x();
+		const double dy = p1_screen.y() - p0_screen.y();
+		const double length = std::hypot(dx, dy);
+
+		QPointF normal(0.0, -1.0);
+		if (length > 1e-4)
+		{
+			normal = QPointF(-dy / length, dx / length);
+			if (normal.y() > 0.0)
+			{
+				normal = -normal;
+			}
+		}
+
+		const double normal_offset = 18.0;
+		const QPointF badge_center = mid_screen + normal * normal_offset;
+
+		QFont badge_font("Segoe UI", 9, QFont::Bold);
+		painter->setFont(badge_font);
+		const QFontMetrics fm(badge_font);
+#if QT_VERSION >= QT_VERSION_CHECK(5, 11, 0)
+		const int text_w = fm.horizontalAdvance(measure_text);
+#else
+		const int text_w = fm.width(measure_text);
+#endif
+		const int text_h = fm.height();
+		const int pad_x = 8;
+		const int pad_y = 4;
+		const int badge_w = text_w + 2 * pad_x;
+		const int badge_h = text_h + 2 * pad_y;
+
+		QRectF badge_rect(badge_center.x() - badge_w / 2.0, badge_center.y() - badge_h / 2.0, badge_w, badge_h);
+
+		if (badge_rect.left() < vr.left() + 4) badge_rect.moveLeft(vr.left() + 4);
+		if (badge_rect.right() > vr.right() - 4) badge_rect.moveRight(vr.right() - 4);
+		if (badge_rect.top() < vr.top() + 4) badge_rect.moveTop(vr.top() + 4);
+		if (badge_rect.bottom() > vr.bottom() - 4) badge_rect.moveBottom(vr.bottom() - 4);
+
+		painter->setRenderHint(QPainter::Antialiasing, true);
+
+		// Rounded translucent dark badge (#071728 with 80% opacity)
+		const QColor badge_bg(7, 23, 40, 204);
+		// Crisp cyan/white contrast border (#38BDF8)
+		const QColor badge_border(56, 189, 248);
+		const QPen border_pen(badge_border, 1.5);
+		painter->setPen(border_pen);
+		painter->setBrush(QBrush(badge_bg));
+		painter->drawRoundedRect(badge_rect, 4.0, 4.0);
+
+		// Crisp white Segoe UI measurement text
+		painter->setPen(QColor(255, 255, 255));
+		painter->drawText(badge_rect, Qt::AlignCenter, measure_text);
+	}
+
 	painter->restore();
 }
 
@@ -725,8 +813,12 @@ void StudyGraphicsView::draw_us_regions()
 
 void StudyGraphicsView::set_empty_distance()
 {
+	m0_set = false;
+	m1_set = false;
 	QPainterPath path___;
 	measurment_line->setPath(path___);
+	if (viewport())
+		viewport()->update();
 }
 
 void StudyGraphicsView::measure()
@@ -744,6 +836,8 @@ void StudyGraphicsView::measure()
 	{
 		parent->set_measure_text(QString(""));
 	}
+	if (viewport())
+		viewport()->update();
 }
 
 void StudyGraphicsView::flipX()

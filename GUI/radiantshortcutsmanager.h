@@ -149,6 +149,9 @@ public slots:
     // 11. System Help & Configuration
     void trigger_help_dialog();
     void trigger_config_dialog();
+    void trigger_deidentify();
+    void trigger_dicom_metadata();
+    void trigger_settings_tab();
 
     // 12. ROIs deletion
     void delete_selected_roi();
@@ -196,6 +199,7 @@ private:
     QAction * action_cine{nullptr};
     QAction * action_mpr{nullptr};
     QAction * action_3d_vr{nullptr};
+    QAction * action_dicom_meta{nullptr};
     QAction * action_help{nullptr};
     QAction * action_config{nullptr};
 

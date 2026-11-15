@@ -19,6 +19,7 @@
 #include <QEvent>
 #include <QCloseEvent>
 #include <QProgressDialog>
+#include <QCache>
 
 class QGraphicsPathItem;
 class Aliza;
@@ -67,6 +68,8 @@ public:
 		const bool = false /*frame level, to avoid check map twice*/);
 	void clear_();
 	void update_frames();
+	void clear_slice_pixmap_cache();
+	QCache<QString, QPixmap> m_slice_pixmap_cache;
 	ImageContainer image_container;
 	float get_offset_x();
 	float get_offset_y();
@@ -109,6 +112,14 @@ public:
 	bool get_enable_overlays() const;
 	void set_enable_shutter(bool);
 	void set_enable_overlays(bool);
+	void set_oblique_slice_2D(
+		ImageVariant * v,
+		double angle,
+		short target_plane,
+		bool fastDraftMode = false);
+	void reset_oblique_slice();
+	bool is_oblique() const { return m_is_oblique_active; }
+	double get_oblique_angle() const { return m_oblique_angle; }
 
 public slots:
 	void set_frame_time_unit(bool);
@@ -150,6 +161,8 @@ private:
 	QWidget * multi_frame_ptr;
 	bool alt_mode{};
 	bool show_cursor{};
+	bool m_is_oblique_active{false};
+	double m_oblique_angle{0.0};
 };
 
 #endif

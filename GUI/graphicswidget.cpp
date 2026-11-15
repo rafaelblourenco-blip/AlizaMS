@@ -20,6 +20,10 @@
 #include <QDir>
 #include <QScrollBar>
 #include <itkExtractImageFilter.h>
+#include <itkResampleImageFilter.h>
+#include <itkIdentityTransform.h>
+#include <itkNearestNeighborInterpolateImageFunction.h>
+#include <itkLinearInterpolateImageFunction.h>
 #include <itkImageRegionConstIterator.h>
 #include "processimagethreadLUT.hxx"
 #include "graphicsutils.h"
@@ -240,6 +244,145 @@ template<typename Tin, typename Tout> QString get_slice_(
 		v2d->idimx = out_image->GetLargestPossibleRegion().GetSize()[0];
 		v2d->idimy = out_image->GetLargestPossibleRegion().GetSize()[1];
 	}
+	return QString();
+}
+
+template<typename Tin, typename Tout> QString get_oblique_slice_(
+	const typename Tin::Pointer & volume3D,
+	ImageVariant2D * v2d,
+	typename Tout::Pointer & out_slice2D,
+	const itk::Point<double, 3> & center,
+	const itk::Vector<double, 3> & vecU,
+	const itk::Vector<double, 3> & vecV,
+	const unsigned int width,
+	const unsigned int height,
+	const double spacingU,
+	const double spacingV,
+	const bool fastDraftMode)
+{
+	if (volume3D.IsNull())
+	{
+		return QString("get_oblique_slice_() : volume3D.IsNull()");
+	}
+	if (width == 0 || height == 0)
+	{
+		return QString("get_oblique_slice_() : invalid dimensions");
+	}
+
+	// Compute normal vector N = U x V
+	itk::Vector<double, 3> vecN;
+	vecN[0] = vecU[1] * vecV[2] - vecU[2] * vecV[1];
+	vecN[1] = vecU[2] * vecV[0] - vecU[0] * vecV[2];
+	vecN[2] = vecU[0] * vecV[1] - vecU[1] * vecV[0];
+
+	// Compute physical origin P_origin = C - ((width - 1)/2)*spacingU*U - ((height - 1)/2)*spacingV*V
+	itk::Point<double, 3> pOrigin;
+	const double halfW = (static_cast<double>(width) - 1.0) * 0.5 * spacingU;
+	const double halfH = (static_cast<double>(height) - 1.0) * 0.5 * spacingV;
+	pOrigin[0] = center[0] - halfW * vecU[0] - halfH * vecV[0];
+	pOrigin[1] = center[1] - halfW * vecU[1] - halfH * vecV[1];
+	pOrigin[2] = center[2] - halfW * vecU[2] - halfH * vecV[2];
+
+	typedef itk::ResampleImageFilter<Tin, Tin> ResampleFilterType;
+	typename ResampleFilterType::Pointer resampler = ResampleFilterType::New();
+	resampler->SetInput(volume3D);
+
+	typename ResampleFilterType::SizeType outSize;
+	outSize[0] = width;
+	outSize[1] = height;
+	outSize[2] = 1;
+	resampler->SetSize(outSize);
+
+	typename ResampleFilterType::SpacingType outSpacing;
+	outSpacing[0] = spacingU;
+	outSpacing[1] = spacingV;
+	outSpacing[2] = 1.0;
+	resampler->SetOutputSpacing(outSpacing);
+
+	resampler->SetOutputOrigin(pOrigin);
+
+	typename ResampleFilterType::DirectionType outDirection;
+	for (unsigned int r = 0; r < 3; ++r)
+	{
+		outDirection[r][0] = vecU[r];
+		outDirection[r][1] = vecV[r];
+		outDirection[r][2] = vecN[r];
+	}
+	resampler->SetOutputDirection(outDirection);
+
+	typedef itk::IdentityTransform<double, 3> TransformType;
+	resampler->SetTransform(TransformType::New());
+
+	// Set default background pixel value
+	typename Tin::PixelType defaultPixel{};
+	resampler->SetDefaultPixelValue(defaultPixel);
+
+	// Dual-mode interpolation:
+	// fastDraftMode == true: NearestNeighbor for 60 FPS interactive drag
+	// fastDraftMode == false: Linear for diagnostic fidelity upon release
+	if (fastDraftMode)
+	{
+		typedef itk::NearestNeighborInterpolateImageFunction<Tin, double> NNInterpolatorType;
+		resampler->SetInterpolator(NNInterpolatorType::New());
+	}
+	else
+	{
+		typedef itk::LinearInterpolateImageFunction<Tin, double> LinearInterpolatorType;
+		resampler->SetInterpolator(LinearInterpolatorType::New());
+	}
+
+	try
+	{
+		resampler->Update();
+	}
+	catch (const itk::ExceptionObject & ex)
+	{
+		return QString(ex.GetDescription());
+	}
+
+	// Extract 2D slice from resampled 3D image [width, height, 1]
+	typedef itk::ExtractImageFilter<Tin, Tout> ExtractFilterType;
+	typename ExtractFilterType::Pointer extractor = ExtractFilterType::New();
+	extractor->SetInput(resampler->GetOutput());
+
+	typename Tin::RegionType extractRegion;
+	typename Tin::IndexType extractIndex;
+	extractIndex.Fill(0);
+	typename Tin::SizeType extractSize;
+	extractSize[0] = width;
+	extractSize[1] = height;
+	extractSize[2] = 0;
+	extractRegion.SetIndex(extractIndex);
+	extractRegion.SetSize(extractSize);
+
+	extractor->SetExtractionRegion(extractRegion);
+	extractor->SetDirectionCollapseToIdentity();
+
+	try
+	{
+		extractor->Update();
+	}
+	catch (const itk::ExceptionObject & ex)
+	{
+		return QString(ex.GetDescription());
+	}
+
+	out_slice2D = extractor->GetOutput();
+	if (out_slice2D.IsNotNull())
+	{
+		out_slice2D->DisconnectPipeline();
+	}
+	else
+	{
+		return QString("Out oblique slice is null");
+	}
+
+	if (v2d)
+	{
+		v2d->idimx = width;
+		v2d->idimy = height;
+	}
+
 	return QString();
 }
 
@@ -2581,6 +2724,233 @@ void GraphicsWidget::set_slice_2D(
 		{
 			if (graphicsview->pr_area->isVisible()) graphicsview->pr_area->hide();
 		}
+	}
+}
+
+void GraphicsWidget::set_oblique_slice_2D(
+	ImageVariant * v,
+	double angle,
+	short target_plane,
+	bool fastDraftMode)
+{
+	if (!v || !image_container.image2D) return;
+
+	image_container.image3D = v;
+
+	// Check if rotation angle is practically zero
+	if (std::abs(angle) < 1e-4)
+	{
+		m_is_oblique_active = false;
+		m_oblique_angle = 0.0;
+		set_slice_2D(v, 0, true, false);
+		return;
+	}
+
+	m_is_oblique_active = true;
+	m_oblique_angle = angle;
+
+	// Clear previous 2D slices
+	if (image_container.image2D->pSS.IsNotNull())
+	{
+		image_container.image2D->pSS->DisconnectPipeline();
+		image_container.image2D->pSS = nullptr;
+	}
+	if (image_container.image2D->pUS.IsNotNull())
+	{
+		image_container.image2D->pUS->DisconnectPipeline();
+		image_container.image2D->pUS = nullptr;
+	}
+	if (image_container.image2D->pSI.IsNotNull())
+	{
+		image_container.image2D->pSI->DisconnectPipeline();
+		image_container.image2D->pSI = nullptr;
+	}
+	if (image_container.image2D->pUI.IsNotNull())
+	{
+		image_container.image2D->pUI->DisconnectPipeline();
+		image_container.image2D->pUI = nullptr;
+	}
+	if (image_container.image2D->pUC.IsNotNull())
+	{
+		image_container.image2D->pUC->DisconnectPipeline();
+		image_container.image2D->pUC = nullptr;
+	}
+	if (image_container.image2D->pF.IsNotNull())
+	{
+		image_container.image2D->pF->DisconnectPipeline();
+		image_container.image2D->pF = nullptr;
+	}
+	if (image_container.image2D->pD.IsNotNull())
+	{
+		image_container.image2D->pD->DisconnectPipeline();
+		image_container.image2D->pD = nullptr;
+	}
+	if (image_container.image2D->pSLL.IsNotNull())
+	{
+		image_container.image2D->pSLL->DisconnectPipeline();
+		image_container.image2D->pSLL = nullptr;
+	}
+	if (image_container.image2D->pULL.IsNotNull())
+	{
+		image_container.image2D->pULL->DisconnectPipeline();
+		image_container.image2D->pULL = nullptr;
+	}
+
+	// Compute physical center point from current crosshair indices
+	const int idx_x = v->di ? v->di->selected_x_slice : 0;
+	const int idx_y = v->di ? v->di->selected_y_slice : 0;
+	const int idx_z = v->di ? v->di->selected_z_slice : 0;
+
+	itk::Point<double, 3> centerPoint;
+	itk::Matrix<double, 3, 3> inDir;
+	inDir.SetIdentity();
+
+	itk::Index<3> centerIndex;
+	centerIndex[0] = std::max(0, std::min(idx_x, (v->di ? v->di->idimx : 512) - 1));
+	centerIndex[1] = std::max(0, std::min(idx_y, (v->di ? v->di->idimy : 512) - 1));
+	centerIndex[2] = std::max(0, std::min(idx_z, (v->di ? v->di->idimz : 512) - 1));
+
+	auto getVolumeInfo = [&](auto & ptr) {
+		if (ptr.IsNotNull())
+		{
+			ptr->TransformIndexToPhysicalPoint(centerIndex, centerPoint);
+			inDir = ptr->GetDirection();
+		}
+	};
+
+	if (v->pSS.IsNotNull()) getVolumeInfo(v->pSS);
+	else if (v->pUS.IsNotNull()) getVolumeInfo(v->pUS);
+	else if (v->pSI.IsNotNull()) getVolumeInfo(v->pSI);
+	else if (v->pUI.IsNotNull()) getVolumeInfo(v->pUI);
+	else if (v->pUC.IsNotNull()) getVolumeInfo(v->pUC);
+	else if (v->pF.IsNotNull()) getVolumeInfo(v->pF);
+	else if (v->pD.IsNotNull()) getVolumeInfo(v->pD);
+	else if (v->pSLL.IsNotNull()) getVolumeInfo(v->pSLL);
+	else if (v->pULL.IsNotNull()) getVolumeInfo(v->pULL);
+	else
+	{
+		centerPoint[0] = (v->di ? v->di->ix_origin : 0.0) + centerIndex[0] * (v->di ? v->di->ix_spacing : 1.0);
+		centerPoint[1] = (v->di ? v->di->iy_origin : 0.0) + centerIndex[1] * (v->di ? v->di->iy_spacing : 1.0);
+		centerPoint[2] = (v->di ? v->di->iz_origin : 0.0) + centerIndex[2] * (v->di ? v->di->iz_spacing : 1.0);
+	}
+
+	itk::Vector<double, 3> e0, e1, e2;
+	for (unsigned int i = 0; i < 3; ++i)
+	{
+		e0[i] = inDir[i][0];
+		e1[i] = inDir[i][1];
+		e2[i] = inDir[i][2];
+	}
+
+	const double cosA = std::cos(angle);
+	const double sinA = std::sin(angle);
+	itk::Vector<double, 3> vecU, vecV;
+	unsigned int width = 512, height = 512;
+	double spacingU = 1.0, spacingV = 1.0;
+
+	if (target_plane == 1) // Coronal-like (rotated around Z)
+	{
+		vecU = e0 * cosA + e1 * sinA;
+		vecV = e2;
+		width = v->di ? v->di->idimx : 512;
+		height = v->di ? v->di->idimz : 512;
+		spacingU = v->di ? v->di->ix_spacing : 1.0;
+		spacingV = v->di ? v->di->iz_spacing : 1.0;
+	}
+	else if (target_plane == 0) // Sagittal-like (rotated around Z)
+	{
+		vecU = e1 * cosA - e0 * sinA;
+		vecV = e2;
+		width = v->di ? v->di->idimy : 512;
+		height = v->di ? v->di->idimz : 512;
+		spacingU = v->di ? v->di->iy_spacing : 1.0;
+		spacingV = v->di ? v->di->iz_spacing : 1.0;
+	}
+	else // target_plane == 2, Axial-like (rotated around Y/X)
+	{
+		vecU = e0 * cosA + e2 * sinA;
+		vecV = e1;
+		width = v->di ? v->di->idimx : 512;
+		height = v->di ? v->di->idimy : 512;
+		spacingU = v->di ? v->di->ix_spacing : 1.0;
+		spacingV = v->di ? v->di->iy_spacing : 1.0;
+	}
+
+	QString error_;
+	switch (v->image_type)
+	{
+	case 0:
+		if (v->pSS.IsNotNull())
+			error_ = get_oblique_slice_<ImageTypeSS, Image2DTypeSS>(
+				v->pSS, image_container.image2D, image_container.image2D->pSS,
+				centerPoint, vecU, vecV, width, height, spacingU, spacingV, fastDraftMode);
+		break;
+	case 1:
+		if (v->pUS.IsNotNull())
+			error_ = get_oblique_slice_<ImageTypeUS, Image2DTypeUS>(
+				v->pUS, image_container.image2D, image_container.image2D->pUS,
+				centerPoint, vecU, vecV, width, height, spacingU, spacingV, fastDraftMode);
+		break;
+	case 2:
+		if (v->pSI.IsNotNull())
+			error_ = get_oblique_slice_<ImageTypeSI, Image2DTypeSI>(
+				v->pSI, image_container.image2D, image_container.image2D->pSI,
+				centerPoint, vecU, vecV, width, height, spacingU, spacingV, fastDraftMode);
+		break;
+	case 3:
+		if (v->pUI.IsNotNull())
+			error_ = get_oblique_slice_<ImageTypeUI, Image2DTypeUI>(
+				v->pUI, image_container.image2D, image_container.image2D->pUI,
+				centerPoint, vecU, vecV, width, height, spacingU, spacingV, fastDraftMode);
+		break;
+	case 4:
+		if (v->pUC.IsNotNull())
+			error_ = get_oblique_slice_<ImageTypeUC, Image2DTypeUC>(
+				v->pUC, image_container.image2D, image_container.image2D->pUC,
+				centerPoint, vecU, vecV, width, height, spacingU, spacingV, fastDraftMode);
+		break;
+	case 5:
+		if (v->pF.IsNotNull())
+			error_ = get_oblique_slice_<ImageTypeF, Image2DTypeF>(
+				v->pF, image_container.image2D, image_container.image2D->pF,
+				centerPoint, vecU, vecV, width, height, spacingU, spacingV, fastDraftMode);
+		break;
+	case 6:
+		if (v->pD.IsNotNull())
+			error_ = get_oblique_slice_<ImageTypeD, Image2DTypeD>(
+				v->pD, image_container.image2D, image_container.image2D->pD,
+				centerPoint, vecU, vecV, width, height, spacingU, spacingV, fastDraftMode);
+		break;
+	case 7:
+		if (v->pSLL.IsNotNull())
+			error_ = get_oblique_slice_<ImageTypeSLL, Image2DTypeSLL>(
+				v->pSLL, image_container.image2D, image_container.image2D->pSLL,
+				centerPoint, vecU, vecV, width, height, spacingU, spacingV, fastDraftMode);
+		break;
+	case 8:
+		if (v->pULL.IsNotNull())
+			error_ = get_oblique_slice_<ImageTypeULL, Image2DTypeULL>(
+				v->pULL, image_container.image2D, image_container.image2D->pULL,
+				centerPoint, vecU, vecV, width, height, spacingU, spacingV, fastDraftMode);
+		break;
+	default:
+		break;
+	}
+
+	if (error_.isEmpty())
+	{
+		image_container.image2D->image_type = v->image_type;
+		update_image(0, false, false);
+	}
+}
+
+void GraphicsWidget::reset_oblique_slice()
+{
+	m_is_oblique_active = false;
+	m_oblique_angle = 0.0;
+	if (image_container.image3D)
+	{
+		set_slice_2D(image_container.image3D, 0, true, false);
 	}
 }
 

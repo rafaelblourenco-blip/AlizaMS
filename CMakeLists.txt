@@ -710,6 +710,7 @@ endif()
 
 set(ALIZAMS_SRCS ${ALIZAMS_SRCS}
   "common/commonutils.cpp"
+  "common/ziputils.cpp"
   "common/contourutils.cpp"
   "common/colorspace/colorspace.cpp"
   "common/codecutils.cpp"

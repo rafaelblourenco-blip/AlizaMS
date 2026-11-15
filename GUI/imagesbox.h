@@ -81,6 +81,9 @@ public:
 signals:
 	void open_series_split(int);
 
+public slots:
+	void update_dock_orientation(Qt::DockWidgetArea area);
+
 protected:
 	bool eventFilter(QObject*, QEvent*) override;
 

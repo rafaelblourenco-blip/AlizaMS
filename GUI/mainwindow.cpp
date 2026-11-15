@@ -14,9 +14,11 @@
 #include <QDesktopWidget>
 #endif
 #include <QDateTime>
+#include <QTabBar>
 #include "commonutils.h"
 #include "infodialog.h"
 #include "radiantshortcutsmanager.h"
+#include "ziputils.h"
 
 namespace
 {
@@ -29,6 +31,7 @@ MainWindow::MainWindow(
 	bool ok3d,
 	bool hide_zoom_)
 {
+	ZipUtils::cleanupTempCache();
 	setupUi(this);
 	setDocumentMode(false);
 	scale_icons = 1.0f;
@@ -91,6 +94,8 @@ MainWindow::MainWindow(
 	l1->addWidget(imagesbox);
 	dockWidget1->setWidget(imagesbox_frame1);
 	imagesbox_frame1->hide();
+	connect(dockWidget1, &QDockWidget::dockLocationChanged, this, &MainWindow::on_dock1_location_changed);
+	on_dock1_location_changed(Qt::LeftDockWidgetArea);
 	//
 	toolbox3D_frame->hide();
 	anim2D_frame->hide();
@@ -361,6 +366,7 @@ MainWindow::MainWindow(
 	{
 		studyview = new StudyViewWidget((sheight > swidth), false, scale_icons * adjust_scale_icons);
 	}
+	tabWidget->tabBar()->hide();
 	//
 	createActions();
 	createMenus();
@@ -459,11 +465,14 @@ MainWindow::MainWindow(
 	toolbar2D_frame->hide();
 	toolbar3D_frame->hide();
 	level_frame->hide();
+	level_frame->setMaximumHeight(0);
+	level_frame->setVisible(false);
 	zrange_frame->hide();
 	slider_frame->hide();
 	//
 	connect(browser2->load_pushButton,SIGNAL(clicked()),this,SLOT(load_dicom_series2()));
 	connect(browser2->tableWidget,SIGNAL(itemDoubleClicked(QTableWidgetItem*)),this,SLOT(load_dicom_series2()));
+	connect(browser2,SIGNAL(load_series_requested()),this,SLOT(load_dicom_series2()));
 	if (!hide_zoom)
 	{
 		if (zoomwidget2D)
@@ -641,6 +650,30 @@ void MainWindow::open_args(const QStringList & l)
 			browser2->open_DICOMDIR2(fi.absoluteFilePath());
 			tabWidget->setCurrentIndex(t);
 		}
+		else if (fi.isFile() && ZipUtils::isZipArchive(fi.absoluteFilePath()))
+		{
+			QString errorMsg;
+			const QString extractedDir = ZipUtils::extractZipToTemp(fi.absoluteFilePath(), pb, &errorMsg);
+			if (!extractedDir.isEmpty())
+			{
+				browser2->open_dicom_dir2(extractedDir);
+				if (browser2->tableWidget->rowCount() > 0)
+				{
+					browser2->select_study_rows(0);
+					lock0 = false;
+					load_dicom_series2();
+					tabWidget->setCurrentIndex(0);
+				}
+				else
+				{
+					tabWidget->setCurrentIndex(t);
+				}
+			}
+			else if (!errorMsg.isEmpty())
+			{
+				message = errorMsg;
+			}
+		}
 		else if (fi.isDir())
 		{
 			browser2->open_dicom_dir2(fi.absoluteFilePath());
@@ -688,6 +721,10 @@ void MainWindow::open_args(const QStringList & l)
 	}
 	pb->close();
 	delete pb;
+	if (tabWidget->currentIndex() != 0)
+	{
+		tabWidget->setCurrentIndex(0);
+	}
 	if (!message.isEmpty())
 	{
 		InfoDialog info;
@@ -736,6 +773,7 @@ void MainWindow::exit_app()
 void MainWindow::closeEvent(QCloseEvent * e)
 {
 	writeSettings();
+	ZipUtils::cleanupTempCache();
 	e->accept();
 	close_app();
 }
@@ -1032,6 +1070,11 @@ void MainWindow::createMenus()
 	settings_menu = menuBar()->addMenu(QString("Settings"));
 	settings_menu->addAction(set_default_settings);
 	settings_menu->menuAction()->setVisible(false);
+	//
+	help_menu = menuBar()->addMenu(QString("Ajuda"));
+	action_dicom_meta_help = help_menu->addAction(QString("Mostrar metadados Dicom"));
+	connect(action_dicom_meta_help, SIGNAL(triggered()), this, SLOT(trigger_image_dicom_meta()));
+	help_menu->addAction(aboutAct);
 }
 
 void MainWindow::createToolBars()
@@ -1199,7 +1242,7 @@ void MainWindow::toggle_showgl(bool t)
 		}
 		else
 		{
-			level_frame->show();
+			level_frame->hide();
 			zrange_frame->show();
 		}
 	}
@@ -1217,7 +1260,7 @@ void MainWindow::toggle_show2D(bool t)
 	}
 	else
 	{
-		level_frame->show();
+		level_frame->hide();
 		zrange_frame->show();
 	}
 	if (first_image_loaded)
@@ -1229,7 +1272,7 @@ void MainWindow::toggle_show2D(bool t)
 		}
 		else
 		{
-			level_frame->show();
+			level_frame->hide();
 			zrange_frame->show();
 		}
 	}
@@ -1462,6 +1505,53 @@ void MainWindow::dropEvent(QDropEvent * e)
 		{
 			browser2->open_DICOMDIR2(f);
 			if (tabWidget->currentIndex() != t) tabWidget->setCurrentIndex(t);
+		}
+		else if (fi.isFile() && ZipUtils::isZipArchive(f))
+		{
+			QProgressDialog * pb = new QProgressDialog(
+				QString("Extraindo arquivo compactado..."),
+				QString("Cancelar"),
+				0,
+				0,
+				this);
+			pb->setModal(true);
+			pb->setWindowFlags(pb->windowFlags() ^ Qt::WindowContextHelpButtonHint);
+			pb->setMinimumWidth(256);
+			pb->setRange(0, 0);
+			pb->setValue(0);
+#if QT_VERSION < QT_VERSION_CHECK(5,0,0)
+			pb->show();
+#endif
+			qApp->processEvents();
+
+			QString errorMsg;
+			const QString extractedDir = ZipUtils::extractZipToTemp(f, pb, &errorMsg);
+			pb->close();
+			delete pb;
+
+			if (!extractedDir.isEmpty())
+			{
+				browser2->open_dicom_dir2(extractedDir);
+				if (browser2->tableWidget->rowCount() > 0)
+				{
+					browser2->select_study_rows(0);
+					lock0 = false;
+					load_dicom_series2();
+					if (tabWidget->currentIndex() != 0)
+					{
+						tabWidget->setCurrentIndex(0);
+					}
+					return;
+				}
+				else
+				{
+					if (tabWidget->currentIndex() != t) tabWidget->setCurrentIndex(t);
+				}
+			}
+			else if (!errorMsg.isEmpty())
+			{
+				message = errorMsg;
+			}
 		}
 		else
 		{
@@ -1775,6 +1865,23 @@ void MainWindow::load_dicom_series2()
 		lock0 = false;
 		return;
 	}
+
+	const bool single_series = browser2->take_single_series_flag() ||
+		(QApplication::keyboardModifiers() & (Qt::ControlModifier | Qt::AltModifier));
+	if (!single_series)
+	{
+		int row = browser2->tableWidget->currentRow();
+		if (row < 0)
+		{
+			const QModelIndexList selRows = browser2->tableWidget->selectionModel()->selectedRows();
+			if (!selRows.isEmpty()) row = selRows.first().row();
+		}
+		if (row >= 0)
+		{
+			browser2->select_study_rows(row);
+		}
+	}
+
 	set_ui();
 	QProgressDialog * pb =
 		new QProgressDialog(QString("Loading ..."), QString("Exit"), 0, 0);
@@ -1813,6 +1920,10 @@ void MainWindow::load_dicom_series2()
 	}
 	pb->close();
 	delete pb;
+	if (tabWidget->currentIndex() != 0)
+	{
+		tabWidget->setCurrentIndex(0);
+	}
 	if (!message.isEmpty())
 	{
 		InfoDialog info;
@@ -2304,30 +2415,57 @@ void MainWindow::check_3d_frame()
 
 void MainWindow::trigger_image_dicom_meta()
 {
-	const ImageVariant * v = aliza->get_selected_image_const();
-	if (!v) return;
-	const QStringList & l = v->filenames;
-	if (l.empty())
-	{
-		QMessageBox::information(
-			nullptr,
-			QString("Information"),
-			QString("Not a DICOM image or empty list"));
-		return;
-	}
-	qApp->setOverrideCursor(QCursor(Qt::WaitCursor));
-	qApp->processEvents();
-	sqtree->set_list_of_files(l, 0, true);
-	sqtree->read_file(l.at(0), true);
 	const int t = (multiview_tab) ? 3 : 2;
+	const ImageVariant * v = aliza ? aliza->get_selected_image_const() : nullptr;
+	if (v && !v->filenames.empty())
+	{
+		const QStringList & l = v->filenames;
+		qApp->setOverrideCursor(QCursor(Qt::WaitCursor));
+		qApp->processEvents();
+		sqtree->set_list_of_files(l, 0, true);
+		sqtree->read_file(l.at(0), true);
+		qApp->restoreOverrideCursor();
+	}
 	tabWidget->setCurrentIndex(t);
-	qApp->restoreOverrideCursor();
+	qApp->processEvents();
 }
 
 void MainWindow::set_image_view()
 {
 	if (tabWidget->currentIndex() != 0) tabWidget->setCurrentIndex(0);
 	qApp->processEvents();
+}
+
+void MainWindow::toggle_deidentify()
+{
+	const int t = (multiview_tab) ? 4 : 3;
+	tabWidget->setCurrentIndex(t);
+	qApp->processEvents();
+}
+
+void MainWindow::on_dock1_location_changed(Qt::DockWidgetArea area)
+{
+	if (imagesbox)
+	{
+		imagesbox->update_dock_orientation(area);
+	}
+	if (imagesbox_frame1)
+	{
+		if (area == Qt::TopDockWidgetArea || area == Qt::BottomDockWidgetArea)
+		{
+			imagesbox_frame1->setMinimumHeight(210);
+			imagesbox_frame1->setMaximumHeight(210);
+			imagesbox_frame1->setMinimumWidth(0);
+			imagesbox_frame1->setMaximumWidth(QWIDGETSIZE_MAX);
+		}
+		else
+		{
+			imagesbox_frame1->setMinimumWidth(210);
+			imagesbox_frame1->setMaximumWidth(210);
+			imagesbox_frame1->setMinimumHeight(0);
+			imagesbox_frame1->setMaximumHeight(QWIDGETSIZE_MAX);
+		}
+	}
 }
 
 void MainWindow::update_info_lines_bg()

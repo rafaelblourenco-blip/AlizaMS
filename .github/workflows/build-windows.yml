@@ -43,6 +43,14 @@ jobs:
         .\mpr_slab_test.exe
         if ($LASTEXITCODE -ne 0) { throw "Testes de projecao MPR falharam (codigo $LASTEXITCODE)" }
 
+    - name: Test reference line geometry
+      shell: pwsh
+      run: |
+        cl /nologo /EHsc /std:c++14 tests\test_reference_segment.cpp /Fe:reference_segment_test.exe
+        if ($LASTEXITCODE -ne 0) { throw "Falha ao compilar testes de linhas de referencia (codigo $LASTEXITCODE)" }
+        .\reference_segment_test.exe
+        if ($LASTEXITCODE -ne 0) { throw "Testes de linhas de referencia falharam (codigo $LASTEXITCODE)" }
+
     - name: Cache ITK
       id: cache-itk
       uses: actions/cache@v4

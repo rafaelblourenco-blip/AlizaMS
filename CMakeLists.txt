@@ -889,6 +889,7 @@ set(ALIZAMS_MOC_HRDS
   "GUI/radiantconfigdialog.h"
   "GUI/radiantfiltermanager.h"
   "GUI/radiantoverlaywindow.h"
+  "GUI/pacsdialog.h"
   "GUI/aliza.h")
 
 if(APPLE)

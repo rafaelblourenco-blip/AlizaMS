@@ -21,6 +21,7 @@
 #include "infodialog.h"
 #include "radiantshortcutsmanager.h"
 #include "ziputils.h"
+#include "pacsdialog.h"
 
 namespace
 {
@@ -34,6 +35,7 @@ MainWindow::MainWindow(
 	bool hide_zoom_)
 {
 	ZipUtils::cleanupTempCache();
+	PacsCacheManager::cleanupAllCaches();
 	setupUi(this);
 	setDocumentMode(false);
 	scale_icons = 1.0f;
@@ -647,6 +649,7 @@ void MainWindow::open_args(const QStringList & l)
 		lock0 = false;
 		return;
 	}
+	PacsCacheManager::cleanupOtherCaches(l2.at(0));
 	QProgressDialog * pb = new QProgressDialog(
 		QString("Loading ..."),
 		QString("Exit"),
@@ -819,6 +822,7 @@ void MainWindow::closeEvent(QCloseEvent * e)
 {
 	writeSettings();
 	ZipUtils::cleanupTempCache();
+	PacsCacheManager::cleanupAllCaches();
 	e->accept();
 	close_app();
 }

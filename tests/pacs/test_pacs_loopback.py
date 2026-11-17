@@ -37,7 +37,8 @@ try:
     worker=Path(__file__).resolve().parents[2] / 'pacs' / 'pacs_worker.py'
     proc=subprocess.run([sys.executable,str(worker)],input=json.dumps(dict(req,action='echo')),capture_output=True,text=True,timeout=30,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
     assert proc.returncode == 0 and json.loads(proc.stdout)['ok'], (proc.returncode,proc.stdout,proc.stderr)
-    found=execute(dict(req,action='find')); assert found['ok'] and found['studies'][0]['StudyInstanceUID']==study
+    found=execute(dict(req,action='find',patient_name='SYNTHETIC',modality='CT')); assert found['ok'] and found['studies'][0]['StudyInstanceUID']==study
+    found_series=execute(dict(req,action='find_series',study_uid=study)); assert found_series['ok'] and len(found_series['series'])>=0
     with tempfile.TemporaryDirectory() as dest:
         for method in ('C-GET','C-MOVE'):
             result=execute(dict(req,action='retrieve',retrieve=method,study_uid=study,destination=dest))

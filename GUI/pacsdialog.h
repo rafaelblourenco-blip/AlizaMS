@@ -5,6 +5,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QStringList>
+#include <QComboBox>
 #include <QToolButton>
 
 class MainWindow;

@@ -117,6 +117,7 @@ def execute(req):
             
             # Modality filter
             mod = req.get('modality', '').strip().upper()
+            mods_req = [m.strip().upper() for m in req.get('modalities', []) if m.strip()]
             if mod and mod != 'ALL' and mod != 'TODAS':
                 q.ModalitiesInStudy = mod
             else:
@@ -165,8 +166,12 @@ def execute(req):
                         'NumberOfStudyRelatedInstances': str(getattr(ds, 'NumberOfStudyRelatedInstances', ''))
                     }
                     # Filter client-side if PACS doesn't support server-side modality filtering
-                    if mod and mod not in ('ALL', 'TODAS'):
-                        mods_in_st = st_data['ModalitiesInStudy']
+                    mods_in_st = st_data['ModalitiesInStudy']
+                    if mods_req:
+                        # Check if any requested modality matches
+                        if mods_in_st and not any(m in mods_in_st for m in mods_req):
+                            continue
+                    elif mod and mod not in ('ALL', 'TODAS'):
                         if mods_in_st and mod not in mods_in_st:
                             continue
                     studies.append(st_data)

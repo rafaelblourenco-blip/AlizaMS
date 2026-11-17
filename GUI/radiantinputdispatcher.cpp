@@ -56,30 +56,35 @@ void RadiantInputDispatcher::set_tool(RadiantTool tool)
 void RadiantInputDispatcher::queue_slice_step_gw(GraphicsWidget * gw, int steps)
 {
     if (!gw || steps == 0) return;
-    if (pending_gw && pending_gw != gw)
+    if (gw->slider_m && gw->slider_m->slices_slider)
     {
-        dispatch_pending_slices();
-    }
-    pending_gw = gw;
-    pending_steps_gw += steps;
-    if (throttle_timer && !throttle_timer->isActive())
-    {
-        throttle_timer->start(16); // ~60Hz / 16ms VSync frame interval
+        const int cur = gw->slider_m->slices_slider->value();
+        const int max = gw->slider_m->slices_slider->maximum();
+        const int min = gw->slider_m->slices_slider->minimum();
+        int next = cur + steps;
+        if (next < min) next = min;
+        if (next > max) next = max;
+        if (next != cur)
+        {
+            gw->slider_m->set_slice(next);
+        }
     }
 }
 
 void RadiantInputDispatcher::queue_slice_step_sgw(StudyGraphicsWidget * sgw, int steps)
 {
     if (!sgw || steps == 0) return;
-    if (pending_sgw && pending_sgw != sgw)
+    if (sgw->get_slider())
     {
-        dispatch_pending_slices();
-    }
-    pending_sgw = sgw;
-    pending_steps_sgw += steps;
-    if (throttle_timer && !throttle_timer->isActive())
-    {
-        throttle_timer->start(16); // ~60Hz / 16ms VSync frame interval
+        const int cur = sgw->get_slider()->value();
+        const int max = sgw->get_slider()->maximum();
+        int next = cur + steps;
+        if (next < 0) next = 0;
+        if (next > max) next = max;
+        if (next != cur)
+        {
+            sgw->get_slider()->setValue(next);
+        }
     }
 }
 
@@ -91,8 +96,9 @@ void RadiantInputDispatcher::dispatch_pending_slices()
         {
             const int cur = pending_gw->slider_m->slices_slider->value();
             const int max = pending_gw->slider_m->slices_slider->maximum();
+            const int min = pending_gw->slider_m->slices_slider->minimum();
             int next = cur + pending_steps_gw;
-            if (next < 0) next = 0;
+            if (next < min) next = min;
             if (next > max) next = max;
             pending_steps_gw = 0;
             if (next != cur)
@@ -124,7 +130,7 @@ void RadiantInputDispatcher::dispatch_pending_slices()
             pending_steps_sgw = 0;
             if (next != cur)
             {
-                pending_sgw->set_selected_slice(next);
+                pending_sgw->get_slider()->setValue(next);
             }
         }
         else
@@ -286,7 +292,7 @@ bool RadiantInputDispatcher::handle_mouse_move(GraphicsView * view, QMouseEvent 
         last_pos = e->pos();
         accumulated_browse_dy += dy;
 
-        const int step_px = 5;
+        const int step_px = 4;
         if (std::abs(accumulated_browse_dy) >= step_px)
         {
             const int steps = -accumulated_browse_dy / step_px;
@@ -348,7 +354,7 @@ bool RadiantInputDispatcher::handle_wheel(GraphicsView * view, QWheelEvent * e, 
             m_wheel_idle_timer->start(200);
         }
 
-        const int threshold = 120;
+        const int threshold = 120; // 1 notch = 1 slice step
         if (std::abs(m_wheel_accumulator_gw) >= threshold)
         {
             const int steps = m_wheel_accumulator_gw / threshold;
@@ -447,9 +453,29 @@ bool RadiantInputDispatcher::handle_study_mouse_move(StudyGraphicsView * view, Q
         const double delta_w = static_cast<double>(dx) * 2.0;
         const double delta_c = static_cast<double>(dy) * 2.0;
 
-        if (sgw && sgw->get_aliza())
+        if (sgw)
         {
-            sgw->get_aliza()->adjust_wl_delta(delta_c, delta_w);
+            double cur_c = sgw->image_container.us_window_center_ext;
+            double cur_w = sgw->image_container.us_window_width_ext;
+            if (cur_w < 1.0 && sgw->image_container.image3D && sgw->image_container.image3D->di)
+            {
+                cur_c = sgw->image_container.image3D->di->us_window_center;
+                cur_w = sgw->image_container.image3D->di->us_window_width;
+            }
+            double new_c = cur_c + delta_c;
+            double new_w = cur_w + delta_w;
+            if (new_w < 1.0) new_w = 1.0;
+
+            sgw->image_container.level_locked_ext = false;
+            if (sgw->image_container.image3D && sgw->image_container.image3D->di)
+            {
+                sgw->image_container.image3D->di->lock_level2D = false;
+                sgw->image_container.image3D->di->us_window_center = new_c;
+                sgw->image_container.image3D->di->us_window_width = new_w;
+            }
+
+            sgw->set_center(new_c);
+            sgw->set_width(new_w);
         }
         return true;
     }
@@ -536,6 +562,7 @@ bool RadiantInputDispatcher::handle_study_wheel(StudyGraphicsView * view, QWheel
         {
             m_last_wheel_sgw = sgw;
             m_wheel_accumulator_sgw = 0;
+            if (sgw) sgw->set_active();
         }
 
         m_wheel_accumulator_sgw += delta;
@@ -544,11 +571,12 @@ bool RadiantInputDispatcher::handle_study_wheel(StudyGraphicsView * view, QWheel
             m_wheel_idle_timer->start(200);
         }
 
-        const int threshold = 120;
+        const int threshold = 120; // 1 notch = 1 slice step
         if (std::abs(m_wheel_accumulator_sgw) >= threshold)
         {
             const int steps = m_wheel_accumulator_sgw / threshold;
             m_wheel_accumulator_sgw %= threshold;
+            if (sgw) sgw->set_active();
             queue_slice_step_sgw(sgw, steps);
         }
         return true;

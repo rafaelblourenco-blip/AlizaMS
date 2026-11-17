@@ -1,3 +1,4 @@
+#include <QDirIterator>
 #include "ziputils.h"
 
 #include <QFile>
@@ -235,4 +236,31 @@ void ZipUtils::cleanupTempCache()
 		QDir subDir(dir.absoluteFilePath(sub));
 		subDir.removeRecursively();
 	}
+}
+
+
+QString ZipUtils::findDicomdir(const QString & dirPath)
+{
+	if (dirPath.isEmpty()) return QString();
+	QDir dir(dirPath);
+	if (!dir.exists()) return QString();
+
+	// Check immediate dir
+	if (dir.exists(QStringLiteral("DICOMDIR")))
+	{
+		return dir.absoluteFilePath(QStringLiteral("DICOMDIR"));
+	}
+	if (dir.exists(QStringLiteral("dicomdir")))
+	{
+		return dir.absoluteFilePath(QStringLiteral("dicomdir"));
+	}
+
+	// Recursive search up to 4 levels
+	QDirIterator it(dirPath, QStringList() << QStringLiteral("DICOMDIR") << QStringLiteral("dicomdir"),
+	                QDir::Files, QDirIterator::Subdirectories);
+	if (it.hasNext())
+	{
+		return it.next();
+	}
+	return QString();
 }

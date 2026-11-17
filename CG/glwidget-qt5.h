@@ -27,6 +27,7 @@
 #include <QColor>
 #include <QString>
 #include <QElapsedTimer>
+#include "sculptmask.h"
 
 #define SCENE_ORTHO_SIZE 150.0f
 #define SCENE_POS_Z 400.0f
@@ -37,6 +38,7 @@
 #define TEXTURES_SIZE 8
 
 class ImageVariant;
+class QTimer;
 
 class ShaderObj
 {
@@ -132,6 +134,36 @@ public:
 	~GLWidget();
 	void updateGL() { update(); }
 	void init_();
+	// Independent display state for the 3D renderer.
+	void sync_3d_display();
+	void set_3d_lut(int);
+	bool set_3d_window_normalized(double center, double width);
+	int get_3d_lut() const { return volume_lut; }
+	// 0 trackball, 1 in-plane rotation, 2 pan, 3 zoom, 4 window/level, 5 sculpt.
+	void set_3d_interaction(int mode);
+	void set_3d_window_tool(bool enabled) { set_3d_interaction(enabled ? 4 : 0); }
+	void set_3d_cine(bool enabled);
+	bool is_3d_cine_running() const;
+	int volume_interaction = 0;
+	QTimer * volume_cine_timer = nullptr;
+	QElapsedTimer volume_cine_clock;
+	void reset_3d_display();
+	ImageVariant * volume_display_image = nullptr;
+	double volume_window_center = 0.0;
+	double volume_window_width = 1.0;
+	int volume_lut = 0;
+	bool volume_window_tool = false;
+	void set_sculpt_tool(bool enabled);
+	void apply_sculpt(bool deleteInside);
+	void bind_sculpt_mask(GLuint program);
+	void capture_sculpt_transform(const float *mvp);
+	bool sculpt_tool = false, sculpt_drawing = false, sculpt_transform_valid = false;
+	QPolygonF sculpt_outline;
+	QMatrix4x4 sculpt_texture_to_clip;
+	float sculpt_camera_snapshot[16] = {};
+	int sculpt_snapshot_width = 0, sculpt_snapshot_height = 0;
+	SculptMask sculpt_mask;
+	GLuint sculpt_texture = 0;
 	void close_();
 	void zoom_in(bool);
 	void zoom_out(bool);

@@ -3,6 +3,10 @@
 SliderWidget::SliderWidget()
 {
 	setupUi(this);
+	slices_slider->setOrientation(Qt::Vertical);
+	slices_slider->setInvertedAppearance(true);
+	setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+	setFixedWidth(14);
 	set_style_sheet();
 }
 

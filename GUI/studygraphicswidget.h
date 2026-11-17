@@ -113,6 +113,7 @@ private:
 	bool   enable_shutter{true};
 	bool   enable_overlays{true};
 	bool   alt_mode{false};
+	bool   m_in_sync_window{false};
 };
 
 #endif

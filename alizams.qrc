@@ -50,6 +50,7 @@
 		<file>bitmaps/group.svg</file>
 		<file>bitmaps/dcm.svg</file>
 		<file>bitmaps/cross.svg</file>
+		<file>bitmaps/mpr_oblique.svg</file>
 		<file>bitmaps/alizams2.png</file>
 		<file>bitmaps/distance.svg</file>
 		<file>bitmaps/flipx.svg</file>
@@ -91,9 +92,19 @@
 		<file>bitmaps/radiant_measure.svg</file>
 		<file>bitmaps/radiant_filters.svg</file>
 		<file>bitmaps/radiant_transform.svg</file>
+		<file>bitmaps/radiant_rotate_volume.svg</file>
+		<file>bitmaps/radiant_rotate_plane.svg</file>
+		<file>bitmaps/radiant_scalpel.svg</file>
 		<file>bitmaps/radiant_cine.svg</file>
 		<file>bitmaps/radiant_mpr.svg</file>
+		<file>bitmaps/radiant_reference_lines.svg</file>
+		<file>bitmaps/radiant_lock_90.svg</file>
+		<file>bitmaps/radiant_cine_camera.svg</file>
+		<file>bitmaps/radiant_mpr_label.svg</file>
 		<file>bitmaps/radiant_3d.svg</file>
+		<file>bitmaps/radiant_sync_off.svg</file>
+		<file>bitmaps/radiant_sync_auto.svg</file>
+		<file>bitmaps/radiant_sync_manual.svg</file>
 		<file>bitmaps/radiant_help.svg</file>
 		<file>bitmaps/radiant_config.svg</file>
 		<file>GUI/dark_radiant.qss</file>

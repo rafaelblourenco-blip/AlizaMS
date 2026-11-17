@@ -20,9 +20,12 @@
 #include <QCloseEvent>
 #include <QProgressDialog>
 #include <QCache>
+#include <memory>
 
 class QGraphicsPathItem;
 class Aliza;
+class SlabScheduler;
+struct MprSharedState;
 
 class GraphicsWidget : public QWidget
 {
@@ -68,6 +71,9 @@ public:
 		const bool = false /*frame level, to avoid check map twice*/);
 	void clear_();
 	void update_frames();
+	void set_mpr_state(const std::shared_ptr<MprSharedState> & state) { m_mpr_state = state; }
+	const std::shared_ptr<MprSharedState> & mpr_state() const { return m_mpr_state; }
+	void set_reference_lines_visible(bool);
 	void clear_slice_pixmap_cache();
 	QCache<QString, QPixmap> m_slice_pixmap_cache;
 	ImageContainer image_container;
@@ -116,8 +122,19 @@ public:
 		ImageVariant * v,
 		double angle,
 		short target_plane,
+		short source_plane,
 		bool fastDraftMode = false);
 	void reset_oblique_slice();
+	void recover_mpr_failure();
+	bool handle_mpr_slider(int);
+	bool handle_mpr_point(double, double);
+	bool set_slab_projection(int mode, double thickness_mm);
+	const Image2DTypeUC::Pointer & slab_mask() const { return m_slab_mask; }
+	int slab_mode() const { return m_slab_mode; }
+	double slab_thickness() const { return m_slab_thickness_mm; }
+	bool slab_pending() const { return m_slab_pending; }
+	QString slab_error() const { return m_slab_error; }
+	QString mpr_backend() const { return m_mpr_backend; }
 	bool is_oblique() const { return m_is_oblique_active; }
 	double get_oblique_angle() const { return m_oblique_angle; }
 
@@ -139,6 +156,7 @@ protected:
 	void leaveEvent(QEvent*) override;
 
 private:
+	std::shared_ptr<MprSharedState> m_mpr_state;
 	short  axis;
 	bool   main{};
 	bool   multi{};
@@ -148,6 +166,7 @@ private:
 	short  mouse_modus{};
 	bool   enable_shutter{true};
 	bool   enable_overlays{true};
+	bool   reference_lines_visible{false};
 	int    frame_time_unit{}; // 0 - ms; 1 - s
 	int    frametime_2D{120};
 	double contours_width{};
@@ -163,6 +182,17 @@ private:
 	bool show_cursor{};
 	bool m_is_oblique_active{false};
 	double m_oblique_angle{0.0};
+	short m_oblique_source_plane{2};
+	int m_slab_mode{0};
+	double m_slab_thickness_mm{0.0};
+	Image2DTypeUC::Pointer m_slab_mask;
+	SlabScheduler *m_slab_scheduler{nullptr};
+	bool m_slab_pending{false};
+	QString m_slab_error;
+	QString m_mpr_backend{QStringLiteral("CPU")};
+	void cancel_slab_workers();
+	void update_mpr_state(ImageVariant*);
+	bool update_projected_pixel_value(double, double);
 };
 
 #endif

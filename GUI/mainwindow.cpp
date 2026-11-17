@@ -1,3 +1,5 @@
+#include "radianttoolbarscale.h"
+#include "mprstate.h"
 #include "mainwindow.h"
 #include <QApplication>
 #include <QSettings>
@@ -104,6 +106,9 @@ MainWindow::MainWindow(
 	view3d_frame->hide();
 	annotations_frame->hide();
 	info_line->hide();
+	info_lineZ->hide();
+	info_lineY->hide();
+	info_lineX->hide();
 	view2d_label = new QLabel(this);
 	view3d_label = new QLabel(this);
 	//
@@ -188,6 +193,16 @@ MainWindow::MainWindow(
 	frame2D_viewerZ_layout->setSpacing(0);
 	frame2D_viewerZ_layout->setContentsMargins(0, 0, 0, 0);
 	//
+	// Keep the slice controls beside each image in both single and MPR layouts.
+	horizontalLayout_4->addWidget(slider_frame);
+	horizontalLayout_5->addWidget(slider_frameZ);
+	horizontalLayout_6->addWidget(slider_frameY);
+	horizontalLayout_7->addWidget(slider_frameX);
+	for (QFrame * frame : {slider_frame, slider_frameZ, slider_frameY, slider_frameX})
+	{
+		frame->setFixedWidth(14);
+		frame->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+	}
 	slider_m  = new SliderWidget();
 	slider_frame_layout = new QVBoxLayout(slider_frame);
 	slider_frame_layout->setSpacing(0);
@@ -251,6 +266,11 @@ MainWindow::MainWindow(
 	l8->addWidget(graphicswidget_x);
 	graphicswidget_x->set_sliderwidget(slider_x);
 	graphicswidget_x->set_toolbox2D_widget(toolbox2D);
+	// One physical plane state for all three MPR views.
+	const std::shared_ptr<MprSharedState> mprState = std::make_shared<MprSharedState>();
+	graphicswidget_m->set_mpr_state(mprState);
+	graphicswidget_y->set_mpr_state(mprState);
+	graphicswidget_x->set_mpr_state(mprState);
 	//
 	if (graphicswidget_m->graphicsview)
 	{
@@ -548,7 +568,23 @@ MainWindow::MainWindow(
 	connect(imagesbox->actionStudy,         SIGNAL(triggered()),         this,    SLOT(trigger_studyview()));
 	connect(imagesbox->actionStudyChecked,  SIGNAL(triggered()),         this,    SLOT(trigger_studyview_checked()));
 	connect(imagesbox->actionStudyEmpty,    SIGNAL(triggered()),         this,    SLOT(trigger_studyview_empty()));
-	connect(imagesbox,                      SIGNAL(open_series_split(int)), this, SLOT(trigger_studyview()));
+	connect(imagesbox, &ImagesBox::open_series_split, this, [this](int id) {
+		if (multiview_tab)
+		{
+			if (tabWidget->currentIndex() != 1) tabWidget->setCurrentIndex(1);
+		}
+		else if (studyview)
+		{
+			if (studyview->isMinimized()) studyview->showNormal();
+			else studyview->show();
+			studyview->activateWindow();
+			studyview->raise();
+		}
+		if (studyview)
+		{
+			studyview->load_series_split(id);
+		}
+	});
 	connect(set_default_settings,           SIGNAL(triggered()),         this,    SLOT(trigger_default_settings()));
 #if QT_VERSION >= QT_VERSION_CHECK(5,14,0)
 	connect(settingswidget->styleComboBox,  SIGNAL(currentTextChanged(const QString&)),this, SLOT(set_style(const QString&)));
@@ -656,7 +692,15 @@ void MainWindow::open_args(const QStringList & l)
 			const QString extractedDir = ZipUtils::extractZipToTemp(fi.absoluteFilePath(), pb, &errorMsg);
 			if (!extractedDir.isEmpty())
 			{
-				browser2->open_dicom_dir2(extractedDir);
+				const QString foundDicomdir = ZipUtils::findDicomdir(extractedDir);
+				if (!foundDicomdir.isEmpty())
+				{
+					browser2->open_DICOMDIR2(foundDicomdir);
+				}
+				else
+				{
+					browser2->open_dicom_dir2(extractedDir);
+				}
 				if (browser2->tableWidget->rowCount() > 0)
 				{
 					browser2->select_study_rows(0);
@@ -679,7 +723,8 @@ void MainWindow::open_args(const QStringList & l)
 			browser2->open_dicom_dir2(fi.absoluteFilePath());
 			if (browser2->tableWidget->rowCount() > 0)
 			{
-				browser2->tableWidget->selectRow(0);
+				browser2->select_study_rows(0);
+				lock0 = false;
 				load_dicom_series2();
 				tabWidget->setCurrentIndex(0);
 			}
@@ -1081,8 +1126,9 @@ void MainWindow::createToolBars()
 {
 	toolbar4 = new QToolBar(this);
 	toolbar4->setIconSize(
-		QSize(static_cast<int>(18 * scale_icons*adjust_scale_icons),
-			static_cast<int>(18 * scale_icons*adjust_scale_icons)));
+		QSize(static_cast<int>(22 * scale_icons*adjust_scale_icons),
+			static_cast<int>(22 * scale_icons*adjust_scale_icons)));
+	new RadiantToolbarScale(this, toolbar4);
 	if (toolbar4->layout())
 	{
 		toolbar4->layout()->setContentsMargins(0, 0, 0, 0);
@@ -1107,8 +1153,9 @@ void MainWindow::createToolBars()
 	//
 	toolbar5 = new QToolBar(this);
 	toolbar5->setIconSize(
-		QSize(static_cast<int>(18 * scale_icons*adjust_scale_icons),
-			static_cast<int>(18 * scale_icons*adjust_scale_icons)));
+		QSize(static_cast<int>(22 * scale_icons*adjust_scale_icons),
+			static_cast<int>(22 * scale_icons*adjust_scale_icons)));
+	new RadiantToolbarScale(this, toolbar5);
 	if (toolbar5->layout())
 	{
 		toolbar5->layout()->setContentsMargins(0, 0, 0, 0);
@@ -1149,7 +1196,7 @@ void MainWindow::createToolBars()
 	{
 		toolbar2->addWidget(zoomwidget2D);
 	}
-	toolbar2->addWidget(lutwidget2);
+	// toolbar2->addWidget(lutwidget2); // moved to radiant_toolbar in radiantshortcutsmanager
 	toolbar2->addAction(transp2dAct);
 	toolbar2->addAction(cursorAct);
 	toolbar2->addAction(collisionAct);
@@ -1243,7 +1290,7 @@ void MainWindow::toggle_showgl(bool t)
 		else
 		{
 			level_frame->hide();
-			zrange_frame->show();
+			zrange_frame->setVisible(!frame3D->isHidden());
 		}
 	}
 	qApp->processEvents();
@@ -1261,7 +1308,7 @@ void MainWindow::toggle_show2D(bool t)
 	else
 	{
 		level_frame->hide();
-		zrange_frame->show();
+		zrange_frame->setVisible(!frame3D->isHidden());
 	}
 	if (first_image_loaded)
 	{
@@ -1273,7 +1320,7 @@ void MainWindow::toggle_show2D(bool t)
 		else
 		{
 			level_frame->hide();
-			zrange_frame->show();
+			zrange_frame->setVisible(!frame3D->isHidden());
 		}
 	}
 	qApp->processEvents();
@@ -1531,7 +1578,15 @@ void MainWindow::dropEvent(QDropEvent * e)
 
 			if (!extractedDir.isEmpty())
 			{
-				browser2->open_dicom_dir2(extractedDir);
+				const QString foundDicomdir = ZipUtils::findDicomdir(extractedDir);
+				if (!foundDicomdir.isEmpty())
+				{
+					browser2->open_DICOMDIR2(foundDicomdir);
+				}
+				else
+				{
+					browser2->open_dicom_dir2(extractedDir);
+				}
 				if (browser2->tableWidget->rowCount() > 0)
 				{
 					browser2->select_study_rows(0);
@@ -1837,8 +1892,9 @@ void MainWindow::set_ui()
 		dockWidget1->show();
 		imagesbox_frame1->show();
 		slider_frame->show();
-		view2d_frame->show();
-		info_line->show();
+		// The anatomical planes, MPR and histogram are available in the main toolbar.
+		view2d_frame->hide();
+		info_line->hide();
 		view2d_label->setText("Slice view (Z)");
 		actionViews2DMenu->setEnabled(true);
 		if (glwidget && !glwidget->no_opengl3)

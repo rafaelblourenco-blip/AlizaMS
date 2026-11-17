@@ -1224,13 +1224,27 @@ void StudyGraphicsWidget::set_measure_text(const QString & s)
 void StudyGraphicsWidget::set_center(double x)
 {
 	image_container.us_window_center_ext = x;
+	image_container.level_locked_ext = false;
 	update_image(0);
+	if (studyview && studyview->get_sync_window_settings() && !m_in_sync_window)
+	{
+		m_in_sync_window = true;
+		studyview->sync_window_from(m_id, x, image_container.us_window_width_ext);
+		m_in_sync_window = false;
+	}
 }
 
 void StudyGraphicsWidget::set_width(double x)
 {
 	image_container.us_window_width_ext = x;
+	image_container.level_locked_ext = false;
 	update_image(0);
+	if (studyview && studyview->get_sync_window_settings() && !m_in_sync_window)
+	{
+		m_in_sync_window = true;
+		studyview->sync_window_from(m_id, image_container.us_window_center_ext, x);
+		m_in_sync_window = false;
+	}
 }
 
 void StudyGraphicsWidget::set_lut(short x)
@@ -1521,6 +1535,7 @@ void StudyGraphicsWidget::update_image(
 
 void StudyGraphicsWidget::clear_()
 {
+    if (studyview) studyview->invalidate_reference_lines();
 	if (graphicsview->image_item)
 	{
 #ifdef DELETE_STUDYGRAPHICSIMAGEITEM
@@ -1687,6 +1702,7 @@ void StudyGraphicsWidget::set_image(
 	const short fit,
 	const bool /* always draw US regions */)
 {
+    if (studyview) studyview->invalidate_reference_lines();
 	if (graphicsview->image_item)
 	{
 #ifdef DELETE_STUDYGRAPHICSIMAGEITEM
@@ -2097,15 +2113,21 @@ void StudyGraphicsWidget::set_enable_overlays(bool t)
 
 void StudyGraphicsWidget::set_slider_only(int x)
 {
-	if (!slider) return; // TODO not required
+	if (!slider) return;
 	slider->blockSignals(true);
-	slider->setSliderPosition(x);
+	slider->setValue(x);
 	slider->blockSignals(false);
 }
 
 void StudyGraphicsWidget::set_selected_slice(int x)
 {
-	if (!studyview || !slider) return; // TODO not required
+	if (!studyview || !slider) return;
+	if (slider->value() != x)
+	{
+		slider->blockSignals(true);
+		slider->setValue(x);
+		slider->blockSignals(false);
+	}
 	set_selected_slice2(x, studyview->get_anchored_sliders());
 }
 
@@ -2122,7 +2144,6 @@ void StudyGraphicsWidget::set_selected_slice2(int x, bool update_all)
 		graphicsview->image_item->setPixmap(p);
 #endif
 	}
-	graphicsview->clear_collision_paths();
 	graphicsview->clear_us_regions();
 	graphicsview->clear_prtexts_items();
 	graphicsview->clear_prgraphicobjects_items();
@@ -2342,7 +2363,11 @@ void StudyGraphicsWidget::set_selected_slice2(int x, bool update_all)
 	//
 	if (studyview)
 	{
-		if (studyview->get_active_id() == m_id)
+		if (studyview->get_active_id() != m_id)
+		{
+			studyview->set_active_image(m_id);
+		}
+		else
 		{
 			studyview->update_level(&image_container);
 		}

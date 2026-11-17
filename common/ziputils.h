@@ -14,6 +14,7 @@ public:
 		QProgressDialog * pb = nullptr,
 		QString * errorMsg = nullptr);
 	static void cleanupTempCache();
+	static QString findDicomdir(const QString & dirPath);
 
 private:
 	static void purgeMacMetadata(const QString & dirPath);

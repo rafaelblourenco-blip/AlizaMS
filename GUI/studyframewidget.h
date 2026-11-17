@@ -2,6 +2,7 @@
 #define A_STUDYFRAMEWIDGET_H
 
 #include "ui_studyframewidget.h"
+#include <QToolButton>
 
 class StudyGraphicsWidget;
 
@@ -14,6 +15,10 @@ public:
 	StudyFrameWidget(StudyGraphicsWidget*);
 	~StudyFrameWidget() = default;
 	StudyGraphicsWidget * graphicswidget;
+	QToolButton * close_button{nullptr};
+
+signals:
+	void close_requested(StudyFrameWidget * frame);
 };
 
 #endif

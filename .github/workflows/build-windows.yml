@@ -27,20 +27,45 @@ jobs:
       with:
         arch: x64
 
+    - name: Test MPR physical geometry
+      shell: pwsh
+      run: |
+        cl /nologo /EHsc /std:c++14 tests\test_mpr_geometry.cpp /Fe:mpr_geometry_test.exe
+        if ($LASTEXITCODE -ne 0) { throw "Falha ao compilar testes de geometria MPR (codigo $LASTEXITCODE)" }
+        .\mpr_geometry_test.exe
+        if ($LASTEXITCODE -ne 0) { throw "Testes de geometria MPR falharam (codigo $LASTEXITCODE)" }
+
+    - name: Test MPR slab projections
+      shell: pwsh
+      run: |
+        cl /nologo /EHsc /std:c++14 tests\test_mpr_slab.cpp /Fe:mpr_slab_test.exe
+        if ($LASTEXITCODE -ne 0) { throw "Falha ao compilar testes de projecao MPR (codigo $LASTEXITCODE)" }
+        .\mpr_slab_test.exe
+        if ($LASTEXITCODE -ne 0) { throw "Testes de projecao MPR falharam (codigo $LASTEXITCODE)" }
+
+    - name: Test reference line geometry
+      shell: pwsh
+      run: |
+        cl /nologo /EHsc /std:c++14 tests\test_reference_segment.cpp /Fe:reference_segment_test.exe
+        if ($LASTEXITCODE -ne 0) { throw "Falha ao compilar testes de linhas de referencia (codigo $LASTEXITCODE)" }
+        .\reference_segment_test.exe
+        if ($LASTEXITCODE -ne 0) { throw "Testes de linhas de referencia falharam (codigo $LASTEXITCODE)" }
+
     - name: Cache ITK
       id: cache-itk
       uses: actions/cache@v4
       with:
         path: ${{ runner.workspace }}/itk-install
-        key: ${{ runner.os }}-itk-5.3.0-modular-msvc2022-v5
+        key: ${{ runner.os }}-itk-5.3.0-modular-msvc2022-v6-eigen-install
 
     - name: Build Modular ITK (if not cached)
       shell: pwsh
       run: |
         $ws = "${{ runner.workspace }}".Replace('\', '/')
         $itkConfigFile = Get-ChildItem -Path "$ws/itk-install" -Filter "ITKConfig.cmake" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($itkConfigFile) {
-            Write-Output ">> ITK disponivel e valido em: $($itkConfigFile.FullName)"
+        $eigenConfigFile = Get-ChildItem -Path "$ws/itk-install" -Filter "ITKInternalEigen3Config.cmake" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($itkConfigFile -and $eigenConfigFile) {
+            Write-Output ">> ITK e Eigen interno disponiveis em: $($itkConfigFile.FullName)"
             exit 0
         }
         Write-Output ">> ITK nao encontrado. Iniciando compilacao do ITK 5.3..."
@@ -48,6 +73,7 @@ jobs:
         Set-Location "$ws"
         if (-not (Test-Path "$ws/itk-src")) {
             git clone --depth 1 --branch v5.3.0 https://github.com/InsightSoftwareConsortium/ITK.git itk-src
+            if ($LASTEXITCODE -ne 0) { throw "Falha ao obter ITK (codigo $LASTEXITCODE)" }
         }
         Set-Location "$ws/itk-build"
         cmake -G "Visual Studio 17 2022" -A x64 `
@@ -66,20 +92,36 @@ jobs:
           -DModule_ITKTransform=ON `
           -DCMAKE_INSTALL_PREFIX="$ws/itk-install" `
           ../itk-src
+        if ($LASTEXITCODE -ne 0) { throw "Configuracao do ITK falhou (codigo $LASTEXITCODE)" }
         cmake --build . --config Release --target install --parallel 4
+        if ($LASTEXITCODE -ne 0) { throw "Compilacao do ITK falhou (codigo $LASTEXITCODE)" }
+        # ITK's internal Eigen is a separate CMake project. Install it explicitly:
+        # an incomplete install may otherwise work from itk-build and fail when
+        # only itk-install is restored from cache on a later runner.
+        $eigenBuild = "$ws/itk-build/ITKInternalEigen3-build"
+        if (-not (Test-Path "$eigenBuild/CMakeCache.txt")) { throw "Projeto interno Eigen do ITK nao encontrado em $eigenBuild" }
+        cmake --build "$eigenBuild" --config Release --target install
+        if ($LASTEXITCODE -ne 0) { throw "Instalacao do Eigen interno falhou (codigo $LASTEXITCODE)" }
+        $eigenConfigFile = Get-ChildItem -Path "$ws/itk-install" -Filter "ITKInternalEigen3Config.cmake" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $eigenConfigFile) { throw "ITKInternalEigen3Config.cmake ausente apos instalacao" }
 
     - name: Configure Aliza MS
       shell: pwsh
       run: |
         $ws = "${{ runner.workspace }}".Replace('\', '/')
         
-        $itkFile = Get-ChildItem -Path "$ws" -Filter "ITKConfig.cmake" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        # Always consume the installed tree, never the temporary build tree.
+        $itkFile = Get-ChildItem -Path "$ws/itk-install" -Filter "ITKConfig.cmake" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
         if (-not $itkFile) {
             Write-Error "ITKConfig.cmake nao encontrado no workspace!"
             exit 1
         }
         $itkDir = $itkFile.DirectoryName.Replace('\', '/')
+        $eigenFile = Get-ChildItem -Path "$ws/itk-install" -Filter "ITKInternalEigen3Config.cmake" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $eigenFile) { throw "ITKInternalEigen3Config.cmake nao encontrado na instalacao do ITK" }
+        $eigenDir = $eigenFile.DirectoryName.Replace('\', '/')
         Write-Output ">> ITK configurado em: $itkDir"
+        Write-Output ">> Eigen interno configurado em: $eigenDir"
 
         $qtRoot = "$env:QT_ROOT_DIR".Replace('\', '/')
         $qt5Dir = "$qtRoot/lib/cmake/Qt5"
@@ -89,9 +131,11 @@ jobs:
         Set-Location build
         cmake -G "Visual Studio 17 2022" -A x64 `
           -DALIZA_QT_VERSION=5 `
+          -DALIZA_BUILD_MPR_TESTS=ON `
           -DCMAKE_BUILD_TYPE=Release `
-          -DCMAKE_PREFIX_PATH="$qtRoot;$qtRoot/lib/cmake" `
+          -DCMAKE_PREFIX_PATH="$ws/itk-install;$qtRoot;$qtRoot/lib/cmake" `
           -DQt5_DIR="$qt5Dir" `
+          -DITKInternalEigen3_DIR="$eigenDir" `
           -DITK_DIR="$itkDir" `
           .. *>&1 | Tee-Object -FilePath "../cmake_config.log"
         if ($LASTEXITCODE -ne 0) {
@@ -118,6 +162,12 @@ jobs:
             exit $LASTEXITCODE
         }
 
+    - name: Test ITK MPR pixels
+      shell: pwsh
+      run: |
+        ctest --test-dir build -C Release --output-on-failure
+        if ($LASTEXITCODE -ne 0) { throw "Testes ITK MPR falharam (codigo $LASTEXITCODE)" }
+
     - name: Upload Build Failure Logs
       if: failure() && hashFiles('cmake_build.log') != ''
       uses: actions/upload-artifact@v4
@@ -128,20 +178,40 @@ jobs:
     - name: Package Artifacts
       shell: pwsh
       run: |
-        New-Item -ItemType Directory -Path package -Force | Out-Null
-        $exeFile = Get-ChildItem -Path build -Filter "*aliza*.exe" -Recurse | Select-Object -First 1
-        if (-not $exeFile) {
-            Write-Error "Executavel aliza*.exe nao encontrado apos compilacao!"
-            exit 1
-        }
+        # Use an empty staging directory outside the checkout. The repository's
+        # package/ directory contains source assets for other platforms.
+        $distDir = Join-Path $env:RUNNER_TEMP "aliza-dist-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+        if (Test-Path -LiteralPath $distDir) { throw "Diretorio de distribuicao ja existe: $distDir" }
+        New-Item -ItemType Directory -Path $distDir | Out-Null
+        $exeFiles = @(Get-ChildItem -Path build -Filter "alizams.exe" -Recurse -File)
+        if ($exeFiles.Count -ne 1) { throw "Esperado um alizams.exe compilado; encontrados: $($exeFiles.Count)" }
+        $exeFile = $exeFiles[0]
         Write-Output ">> Encontrado executavel em: $($exeFile.FullName)"
-        Copy-Item $exeFile.FullName -Destination package/aliza.exe
-        Copy-Item $exeFile.FullName -Destination package/alizams.exe
-        if (Test-Path "GUI/dark_radiant.qss") {
-            Copy-Item "GUI/dark_radiant.qss" -Destination package/
+        Copy-Item -LiteralPath $exeFile.FullName -Destination (Join-Path $distDir "aliza.exe")
+        Copy-Item -LiteralPath $exeFile.FullName -Destination (Join-Path $distDir "alizams.exe")
+        if (-not (Test-Path -LiteralPath "GUI/dark_radiant.qss" -PathType Leaf)) { throw "Estilo dark_radiant.qss nao encontrado" }
+        Copy-Item -LiteralPath "GUI/dark_radiant.qss" -Destination $distDir
+        windeployqt (Join-Path $distDir "aliza.exe") --no-translations --compiler-runtime
+        if ($LASTEXITCODE -ne 0) { throw "windeployqt falhou (codigo $LASTEXITCODE)" }
+        foreach ($required in @("aliza.exe", "alizams.exe", "dark_radiant.qss", "Qt5Core.dll", "platforms/qwindows.dll")) {
+            if (-not (Test-Path -LiteralPath (Join-Path $distDir $required) -PathType Leaf)) {
+                throw "Arquivo obrigatorio ausente na distribuicao: $required"
+            }
         }
-        windeployqt package/aliza.exe --no-translations --compiler-runtime
-        7z a aliza-radiant-windows-x64.zip ./package/*
+        Write-Output ">> Arquivos incluidos na distribuicao:"
+        Get-ChildItem -LiteralPath $distDir -Recurse -File | ForEach-Object {
+            Write-Output $_.FullName.Substring($distDir.Length + 1)
+        }
+        $zipPath = Join-Path $env:GITHUB_WORKSPACE "aliza-radiant-windows-x64.zip"
+        if (Test-Path -LiteralPath $zipPath) { throw "Arquivo de destino ja existe: $zipPath" }
+        Push-Location -LiteralPath $distDir
+        try {
+            7z a -tzip "$zipPath" '*'
+            if ($LASTEXITCODE -ne 0) { throw "Empacotamento falhou (codigo $LASTEXITCODE)" }
+        }
+        finally { Pop-Location }
+        7z t "$zipPath"
+        if ($LASTEXITCODE -ne 0) { throw "Verificacao do ZIP falhou (codigo $LASTEXITCODE)" }
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4

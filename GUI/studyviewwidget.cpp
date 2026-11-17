@@ -10,7 +10,10 @@
 #include <QGridLayout>
 #include <QVariant>
 #include <QKeySequence>
+#include <QMenu>
 #include <cmath>
+#include <algorithm>
+#include <vector>
 #if MATRIX_BUTTON_CUSTOM_ACT == 1
 #include "tabledialog.h"
 #endif
@@ -108,6 +111,27 @@ StudyViewWidget::StudyViewWidget(bool vertical, bool tab, float si)
 	readSettings();
 }
 
+QMenu * StudyViewWidget::create_toolbar_menu(QWidget * menuParent)
+{
+	QMenu * menu = new QMenu(menuParent);
+	QMenu * layouts = menu->addMenu(tr("Layout do estudo"));
+	for (int rows = 1; rows <= 4; ++rows)
+		for (int columns = 1; columns <= 4; ++columns)
+		{
+			QAction * action = layouts->addAction(QString("%1 x %2").arg(rows).arg(columns));
+			connect(action, &QAction::triggered, this, [this, rows, columns]() {
+				update_grid(rows, columns);
+			});
+		}
+	menu->addAction(fitall_Action);
+	menu->addAction(scouts_Action);
+	menu->addAction(measure_Action);
+	menu->addAction(anchor_Action);
+	// Detached study windows still need their own controls.
+	if (in_tab) toolbar_frame->hide();
+	return menu;
+}
+
 StudyViewWidget::~StudyViewWidget()
 {
 	QGridLayout * layout = static_cast<QGridLayout*>(scrollAreaWidgetContents->layout());
@@ -159,6 +183,7 @@ void StudyViewWidget::init_(Aliza * a)
 		w->set_left_label(f->left_label);
 		w->set_measure_label(f->measure_label);
 		w->set_icon_button(f->icon_button);
+		connect(f, &StudyFrameWidget::close_requested, this, &StudyViewWidget::close_viewport);
 		f->hide();
 		widgets.push_back(f);
 	}
@@ -193,8 +218,18 @@ void StudyViewWidget::init_(Aliza * a)
 	connect_tools();
 }
 
+void StudyViewWidget::invalidate_reference_lines()
+{
+    const auto next = property("referenceGeneration").toULongLong() + 1;
+    setProperty("referenceGeneration", QVariant::fromValue<qulonglong>(next));
+    for (StudyFrameWidget *frame : widgets)
+        if (frame && frame->graphicswidget && frame->graphicswidget->graphicsview)
+            frame->graphicswidget->graphicsview->clear_collision_paths();
+}
+
 void StudyViewWidget::clear_()
 {
+    invalidate_reference_lines();
 	active_id = -1;
 	saved_r = -1;
 	saved_c = -1;
@@ -445,6 +480,7 @@ void StudyViewWidget::closeEvent(QCloseEvent * e)
 
 void StudyViewWidget::update_grid(int r, int c)
 {
+    invalidate_reference_lines();
 	for (int x = 0; x < widgets.size(); ++x)
 	{
 		if (widgets.at(x))
@@ -503,6 +539,7 @@ void StudyViewWidget::update_grid(int r, int c)
 		}
 	}
 	qApp->processEvents();
+    update_scouts_now();
 }
 
 void StudyViewWidget::update_grid2()
@@ -555,6 +592,7 @@ void StudyViewWidget::set_active_image(int id)
 		update_null();
 		return;
 	}
+	if (active_id == id) return;
 	active_id = id;
 	ImageContainer * c{};
 	for (int i = 0; i < widgets.size(); ++i)
@@ -588,6 +626,7 @@ void StudyViewWidget::set_active_image(int id)
 	}
 	level_frame->setEnabled(true);
 	update_full(c);
+	update_scouts();
 }
 
 void StudyViewWidget::update_full(ImageContainer * c)
@@ -923,10 +962,14 @@ void StudyViewWidget::toggle_scouts(bool t)
 {
 	if (t)
 	{
-		emit update_scouts_required();
+		update_scouts_now();
 	}
 	else
 	{
+		if (m_scouts_debounce_timer && m_scouts_debounce_timer->isActive())
+		{
+			m_scouts_debounce_timer->stop();
+		}
 		for (int i = 0; i < widgets.size(); ++i)
 		{
 			if (widgets.at(i) && widgets.at(i)->graphicswidget)
@@ -1048,44 +1091,236 @@ void StudyViewWidget::update_null()
 
 void StudyViewWidget::update_scouts()
 {
-	if (scouts_Action->isChecked())
+	if (!scouts_Action || !scouts_Action->isChecked()) return;
+
+	if (!m_scouts_debounce_timer)
 	{
+		m_scouts_debounce_timer = new QTimer(this);
+		m_scouts_debounce_timer->setSingleShot(true);
+		connect(m_scouts_debounce_timer, &QTimer::timeout, this, [this]() {
+			if (scouts_Action && scouts_Action->isChecked())
+			{
+				m_scouts_last_update_ms = QDateTime::currentMSecsSinceEpoch();
+				emit update_scouts_required();
+			}
+		});
+	}
+
+	const qint64 now = QDateTime::currentMSecsSinceEpoch();
+	// Throttle: if more than 100ms has elapsed since the last reference lines computation during continuous scrolling, allow an update
+	if (m_scouts_last_update_ms > 0 && (now - m_scouts_last_update_ms) >= 100)
+	{
+		m_scouts_debounce_timer->stop();
+		m_scouts_last_update_ms = now;
+		emit update_scouts_required();
+		return;
+	}
+
+	// Debounce: reset timer for 60ms trailing edge
+	m_scouts_debounce_timer->start(60);
+}
+
+void StudyViewWidget::update_scouts_now()
+{
+	if (m_scouts_debounce_timer && m_scouts_debounce_timer->isActive())
+	{
+		m_scouts_debounce_timer->stop();
+	}
+	if (scouts_Action && scouts_Action->isChecked())
+	{
+		m_scouts_last_update_ms = QDateTime::currentMSecsSinceEpoch();
 		emit update_scouts_required();
 	}
 }
 
 bool StudyViewWidget::get_anchored_sliders() const
 {
-	return anchor_Action->isChecked();
+	return (sync_mode != SyncModeOff && sync_slice_position) || (anchor_Action && anchor_Action->isChecked());
+}
+
+StudyViewWidget::PlaneType StudyViewWidget::get_plane_type(const ImageVariant * iv)
+{
+	if (!iv || !iv->di) return PlaneUnknown;
+	const double * dc = iv->di->dircos;
+	double nx = dc[1] * dc[5] - dc[2] * dc[4];
+	double ny = dc[2] * dc[3] - dc[0] * dc[5];
+	double nz = dc[0] * dc[4] - dc[1] * dc[3];
+	double ax = std::abs(nx);
+	double ay = std::abs(ny);
+	double az = std::abs(nz);
+	if (az >= ax && az >= ay && az > 1e-4) return PlaneAxial;
+	if (ax >= ay && ax >= az && ax > 1e-4) return PlaneSagittal;
+	if (ay >= ax && ay >= az && ay > 1e-4) return PlaneCoronal;
+	if (!iv->orientation_string.isEmpty()) {
+		QString s = iv->orientation_string.toUpper();
+		if (s.contains("AXIAL") || s.contains("TRA") || s.contains("AXI")) return PlaneAxial;
+		if (s.contains("SAG")) return PlaneSagittal;
+		if (s.contains("COR")) return PlaneCoronal;
+	}
+	return PlaneAxial;
+}
+
+void StudyViewWidget::set_sync_mode(SeriesSyncMode mode)
+{
+	sync_mode = mode;
+	if (anchor_Action) anchor_Action->setChecked(sync_mode != SyncModeOff);
+}
+
+void StudyViewWidget::cycle_sync_mode()
+{
+	if (sync_mode == SyncModeOff) set_sync_mode(SyncModeAuto);
+	else if (sync_mode == SyncModeAuto) set_sync_mode(SyncModeManual);
+	else set_sync_mode(SyncModeOff);
+}
+
+void StudyViewWidget::toggle_single_mode(int wid)
+{
+	if (is_single_mode())
+	{
+		restore_multi();
+	}
+	else
+	{
+		QGridLayout * layout = static_cast<QGridLayout*>(scrollAreaWidgetContents->layout());
+		if (layout && layout->rowCount() * layout->columnCount() > 1)
+		{
+			set_single(wid);
+		}
+	}
+}
+
+void StudyViewWidget::sync_zoom_pan_from(int wid, double scale, const QPointF & center)
+{
+	if (!sync_zoom_pan || sync_mode == SyncModeOff) return;
+	if (wid < 0 || wid >= widgets.size() || !widgets[wid] || !widgets[wid]->graphicswidget) return;
+	ImageVariant * src_iv = widgets[wid]->graphicswidget->image_container.image3D;
+	if (!src_iv) return;
+	PlaneType src_plane = get_plane_type(src_iv);
+
+	for (int k = 0; k < widgets.size(); ++k)
+	{
+		if (k == wid || !widgets[k] || !widgets[k]->graphicswidget) continue;
+		StudyGraphicsWidget * tgt = widgets[k]->graphicswidget;
+		ImageVariant * tgt_iv = tgt->image_container.image3D;
+		if (!tgt_iv) continue;
+		if (get_plane_type(tgt_iv) != src_plane) continue;
+
+		tgt->graphicsview->m_scale = scale;
+		tgt->graphicsview->resetTransform();
+		tgt->graphicsview->scale(scale, scale);
+		tgt->graphicsview->centerOn(center);
+	}
+}
+
+void StudyViewWidget::sync_window_from(int wid, double center, double width)
+{
+	if (!sync_window_settings) return;
+	for (int k = 0; k < widgets.size(); ++k)
+	{
+		if (k == wid || !widgets[k] || !widgets[k]->graphicswidget) continue;
+		StudyGraphicsWidget * tgt = widgets[k]->graphicswidget;
+		if (!tgt || !tgt->image_container.image3D) continue;
+		tgt->set_center(center);
+		tgt->set_width(width);
+	}
 }
 
 void StudyViewWidget::update_all_sliders(int wid, int x, int dimz)
 {
+	if (wid < 0 || wid >= widgets.size() || !widgets[wid] || !widgets[wid]->graphicswidget) return;
+	StudyGraphicsWidget * src = widgets[wid]->graphicswidget;
+	ImageVariant * src_iv = src->image_container.image3D;
+	if (!src_iv || !src_iv->di) return;
+
+	int delta = x - prev_slice[wid];
+	prev_slice[wid] = x;
+
+	if (sync_mode == SyncModeOff || !sync_slice_position)
+	{
+		update_scouts();
+		return;
+	}
+
+	PlaneType src_plane = get_plane_type(src_iv);
+	const double * sdc = src_iv->di->dircos;
+	double snx = sdc[1] * sdc[5] - sdc[2] * sdc[4];
+	double sny = sdc[2] * sdc[3] - sdc[0] * sdc[5];
+	double snz = sdc[0] * sdc[4] - sdc[1] * sdc[3];
+	double sn_len = std::sqrt(snx * snx + sny * sny + snz * snz);
+	if (sn_len > 1e-6) { snx /= sn_len; sny /= sn_len; snz /= sn_len; }
+	else { snx = 0; sny = 0; snz = 1; }
+
+	double d_src = 0.0;
+	bool src_has_physical = false;
+	if (x >= 0 && x < static_cast<int>(src_iv->di->image_slices.size()))
+	{
+		const double * sipp = src_iv->di->image_slices[x]->ipp_iop;
+		d_src = sipp[0] * snx + sipp[1] * sny + sipp[2] * snz;
+		src_has_physical = true;
+	}
+
 	for (int k = 0; k < widgets.size(); ++k)
 	{
-		if (widgets.at(k) && widgets.at(k)->graphicswidget)
+		if (k == wid || !widgets[k] || !widgets[k]->graphicswidget) continue;
+		StudyGraphicsWidget * tgt = widgets[k]->graphicswidget;
+		ImageVariant * tgt_iv = tgt->image_container.image3D;
+		if (!tgt_iv || !tgt_iv->di) continue;
+
+		// Images of different cutting planes NEVER roll together
+		PlaneType tgt_plane = get_plane_type(tgt_iv);
+		if (src_plane != tgt_plane) continue;
+
+		const int tgt_dimz = tgt_iv->di->idimz;
+		if (tgt_dimz <= 0) continue;
+
+		int new_slice = -1;
+
+		if (sync_mode == SyncModeAuto)
 		{
-			if (widgets.at(k)->graphicswidget->image_container.image3D &&
-				widgets.at(k)->graphicswidget->get_id() != wid)
+			if (src_has_physical && !tgt_iv->di->image_slices.empty())
 			{
-				const int z = widgets.at(k)->graphicswidget->image_container.image3D->di->idimz;
-				int j = x;
-				if (z != dimz)
+				double min_dist = 1e12;
+				int best_idx = -1;
+				for (size_t s = 0; s < tgt_iv->di->image_slices.size(); ++s)
 				{
-					j = static_cast<int>(round((static_cast<double>(x) * (z - 1)) / static_cast<double>(dimz - 1)));
+					const double * tipp = tgt_iv->di->image_slices[s]->ipp_iop;
+					double d_tgt = tipp[0] * snx + tipp[1] * sny + tipp[2] * snz;
+					double dist = std::abs(d_tgt - d_src);
+					if (dist < min_dist)
+					{
+						min_dist = dist;
+						best_idx = static_cast<int>(s);
+					}
 				}
-				if (j < 0) j = 0;
-				if (j >= z) j = z - 1;
-				widgets[k]->graphicswidget->set_slider_only(j);
-				widgets[k]->graphicswidget->set_selected_slice2(j, false);
+				if (best_idx >= 0) new_slice = best_idx;
+			}
+			if (new_slice < 0)
+			{
+				if (dimz > 1)
+					new_slice = static_cast<int>(std::round((static_cast<double>(x) * (tgt_dimz - 1)) / static_cast<double>(dimz - 1)));
+				else
+					new_slice = 0;
 			}
 		}
+		else if (sync_mode == SyncModeManual)
+		{
+			int cur_tgt = tgt->image_container.selected_z_slice_ext;
+			new_slice = cur_tgt + delta;
+		}
+
+		if (new_slice < 0) new_slice = 0;
+		if (new_slice >= tgt_dimz) new_slice = tgt_dimz - 1;
+
+		prev_slice[k] = new_slice;
+		tgt->set_slider_only(new_slice);
+		tgt->set_selected_slice2(new_slice, false);
 	}
 	update_scouts();
 }
 
 void StudyViewWidget::set_single(int wid)
 {
+    invalidate_reference_lines();
 	QGridLayout * layout = static_cast<QGridLayout*>(scrollAreaWidgetContents->layout());
 	if (!layout)
 	{
@@ -1245,3 +1480,155 @@ void StudyViewWidget::toggle_sync_series()
 }
 
 
+
+
+void StudyViewWidget::load_series_split(int series_id)
+{
+	if (!aliza) return;
+	ImageVariant * iv = aliza->get_image(series_id);
+	if (!iv) return;
+
+	if (saved_r != -1 && saved_c != -1)
+	{
+		restore_multi();
+	}
+
+	// Collect currently loaded unique images in studyview
+	std::vector<ImageVariant*> loaded_images;
+	for (int i = 0; i < widgets.size(); ++i)
+	{
+		if (widgets[i]->graphicswidget && widgets[i]->graphicswidget->image_container.image3D)
+		{
+			ImageVariant * v = widgets[i]->graphicswidget->image_container.image3D;
+			if (std::find(loaded_images.begin(), loaded_images.end(), v) == loaded_images.end())
+			{
+				loaded_images.push_back(v);
+			}
+		}
+	}
+
+	// If studyview had no active images loaded, check if single view has an image
+	if (loaded_images.empty())
+	{
+		ImageVariant * current_v = aliza->get_selected_image();
+		if (current_v)
+		{
+			loaded_images.push_back(current_v);
+		}
+	}
+
+	// Add new series image if not already in list
+	if (std::find(loaded_images.begin(), loaded_images.end(), iv) == loaded_images.end())
+	{
+		loaded_images.push_back(iv);
+	}
+
+	int count = static_cast<int>(loaded_images.size());
+	if (count < 2) count = 2;
+
+	int r = 1;
+	int c = 2;
+	if (count == 2) { r = 1; c = 2; }
+	else if (count == 3) { r = 1; c = 3; }
+	else if (count == 4) { r = 2; c = 2; }
+	else if (count <= 6) { r = 2; c = 3; }
+	else if (count <= 8) { r = 2; c = 4; }
+	else if (count <= 9) { r = 3; c = 3; }
+	else { r = (count + 3) / 4; c = 4; }
+
+	// Clear existing widgets
+	for (int i = 0; i < widgets.size(); ++i)
+	{
+		widgets[i]->graphicswidget->clear_();
+	}
+
+	// Update grid layout
+	update_grid(r, c);
+
+	// Load images into each cell
+	for (size_t i = 0; i < loaded_images.size() && static_cast<int>(i) < widgets.size(); ++i)
+	{
+		widgets[i]->graphicswidget->set_image(loaded_images[i], 1, true);
+	}
+
+	// Focus the newly added series
+	for (int i = 0; i < r * c && i < widgets.size(); ++i)
+	{
+		if (widgets[i]->graphicswidget->get_id() == iv->id)
+		{
+			set_active_image(widgets[i]->graphicswidget->get_id());
+			break;
+		}
+	}
+
+	update_scouts_now();
+}
+
+void StudyViewWidget::close_viewport(StudyFrameWidget * frame)
+{
+	if (!frame) return;
+
+	// Invalidate scout lines
+	invalidate_reference_lines();
+
+	// Clear the target frame
+	frame->graphicswidget->clear_();
+
+	// Collect remaining active images
+	std::vector<ImageVariant*> remaining;
+	for (int i = 0; i < widgets.size(); ++i)
+	{
+		if (widgets[i] != frame && widgets[i]->graphicswidget && widgets[i]->graphicswidget->image_container.image3D)
+		{
+			remaining.push_back(widgets[i]->graphicswidget->image_container.image3D);
+		}
+	}
+
+	const int count = static_cast<int>(remaining.size());
+
+	// If no remaining images, clear all and reset to 1x1 empty
+	if (count == 0)
+	{
+		clear_();
+		update_grid(1, 1);
+		active_id = -1;
+		update_null();
+		return;
+	}
+
+	int r = 1;
+	int c = 1;
+	if (count == 1) { r = 1; c = 1; }
+	else if (count == 2) { r = 1; c = 2; }
+	else if (count == 3) { r = 1; c = 3; }
+	else if (count == 4) { r = 2; c = 2; }
+	else if (count <= 6) { r = 2; c = 3; }
+	else if (count <= 8) { r = 2; c = 4; }
+	else if (count <= 9) { r = 3; c = 3; }
+	else { r = (count + 3) / 4; c = 4; }
+
+	// Clear all widgets
+	for (int i = 0; i < widgets.size(); ++i)
+	{
+		widgets[i]->graphicswidget->clear_();
+	}
+
+	update_grid(r, c);
+
+	for (int i = 0; i < count && i < widgets.size(); ++i)
+	{
+		widgets[i]->graphicswidget->set_image(remaining[i], 1, true);
+	}
+
+	if (!remaining.empty())
+	{
+		set_active_image(widgets[0]->graphicswidget->get_id());
+	}
+	else
+	{
+		active_id = -1;
+		update_null();
+	}
+
+	update_scouts_now();
+}

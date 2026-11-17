@@ -2,6 +2,9 @@
 //#define ALIZA_PERF_COLLISION
 
 #include "aliza.h"
+#include "common/reference_segment.h"
+#include <memory>
+#include <vector>
 #include <QDialog>
 #include <QFormLayout>
 #include <QDoubleSpinBox>
@@ -31,6 +34,7 @@
 #include "spectroscopyutils.h"
 #include "updateqtcommand.h"
 #include "histogramgen.h"
+#include <QTimer>
 #include "studyframewidget.h"
 #include "studygraphicswidget.h"
 #include "srwidget.h"
@@ -73,6 +77,7 @@ static btDbvtBroadphase                * g_broadphase = nullptr;
 static btCollisionWorld                * g_collisionWorld = nullptr;
 static btAlignedObjectArray<btCollisionShape*> g_collision_shapes;
 static bool show_all_study_collisions = true;
+static int reference_mode = 0;
 
 struct ClosestRayResultCallback1 : public btCollisionWorld::ClosestRayResultCallback
 {
@@ -363,178 +368,74 @@ static void debounce_check_slice_collisions(const ImageVariant * v, GraphicsWidg
 
 void check_slice_collisions(const ImageVariant * v, GraphicsWidget * w)
 {
-#ifdef ALIZA_PERF_COLLISION
-	const auto t0 = std::chrono::steady_clock::now();
-#endif
-	if (!w) return;
-	if (w->get_axis() != 2) return;
-	w->graphicsview->clear_collision_paths();
-	if (!show_all_study_collisions) return;
-	if (!g_collisionWorld) return;
-	if (!v) return;
-#if 1
-	if (v->frame_of_ref_uid.isEmpty()) return;
-#endif
-	const int z = v->di->selected_z_slice;
-	const int slices_size = v->di->image_slices.size();
-	if (v->di->idimz != slices_size) return;
-	if (z >= slices_size) return;
-	QList<const ImageVariant*> refs;
-	if (selected_images.size() > 1)
-	{
-		search_frame_of_ref2(v->id, v->frame_of_ref_uid, v->study_uid, refs);
-	}
-	else
-	{
-		search_frame_of_ref(v->id, v->frame_of_ref_uid, v->study_uid, refs);
-	}
-	if (refs.empty()) return;
-	btAlignedObjectArray<btStaticPlaneShape*> tmp_shapes;
-	btAlignedObjectArray<btCollisionObject*> tmp_objects;
-	tmp_shapes.resize(0);
-	tmp_objects.resize(0);
-	add_slice_collision_plane(
-		v,
-		z,
-		2,
-		tmp_shapes,
-		tmp_objects);
-#if 1
-	// TODO check, maybe computeOverlappingPairs() is enough
-	// or nothing?
-	g_collisionWorld->performDiscreteCollisionDetection();
-#endif
-	for (int u = 0; u < refs.size(); ++u)
-	{
-		const int z1 = refs.at(u)->di->selected_z_slice;
-		if (z1 >= static_cast<int>(refs.at(u)->di->image_slices.size()))
-		{
-			continue;
-		}
-		if (check_slices_parallel(v, z, refs.at(u), z1))
-		{
-			continue;
-		}
-		std::vector< std::array<float, 2> > hits;
-		for (int q = 0; q < 4; ++q)
-		{
-			int k0 = 0, k1 = 1, k2 = 2, k3 = 3, k4 = 4, k5 = 5;
-			switch (q)
-			{
-			case 1:
-				k0 = 3;
-				k1 = 4;
-				k2 = 5;
-				k3 = 6;
-				k4 = 7;
-				k5 = 8;
-				break;
-			case 2:
-				k0 = 6;
-				k1 = 7;
-				k2 = 8;
-				k3 = 9;
-				k4 = 10;
-				k5 = 11;
-				break;
-			case 3:
-				k0 = 9;
-				k1 = 10;
-				k2 = 11;
-				k3 = 0;
-				k4 = 1;
-				k5 = 2;
-				break;
-			default:
-				break;
-			}
-			const btVector3 from(
-				refs.at(u)->di->image_slices.at(z1)->fv[k0],
-				refs.at(u)->di->image_slices.at(z1)->fv[k1],
-				refs.at(u)->di->image_slices.at(z1)->fv[k2]);
-			const btVector3 to(
-				refs.at(u)->di->image_slices.at(z1)->fv[k3],
-				refs.at(u)->di->image_slices.at(z1)->fv[k4],
-				refs.at(u)->di->image_slices.at(z1)->fv[k5]);
-			ClosestRayResultCallback1 rayResult(from, to);
-			g_collisionWorld->rayTest(from, to, rayResult);
-			if (rayResult.hasHit())
-			{
-				const btCollisionObject * o = rayResult.m_collisionObject;
-				if (o)
-				{
-					const int * usrP = static_cast<int*>(o->getUserPointer());
-					if (usrP && usrP[0] == v->id)
-					{
-						const btVector3 hit = rayResult.m_hitPointWorld;
-						ImageTypeUC::Pointer image = ImageTypeUC::New();
-						const bool image_ok = ContourUtils::phys_space_from_slice(v, z, image);
-						if (image_ok)
-						{
-							itk::Point<float, 3> point;
-							point[0] = hit.getX();
-							point[1] = hit.getY();
-							point[2] = hit.getZ();
+    Q_UNUSED(v);
+    // A single viewport has no other displayed plane to reference. Searching
+    // all loaded series here added misleading lines from hidden thumbnails.
+    if (w && w->graphicsview) w->graphicsview->clear_collision_paths();
+}
+
+namespace {
+struct ReferenceSeries {
+    std::vector<std::array<mpr_geometry::Vector3,4>> corners;
+    QColor color;
+};
+struct ReferenceJob {
+    QPointer<StudyGraphicsView> view;
+    mpr_geometry::PlaneRectangle target;
+    std::shared_ptr<ReferenceSeries> source;
+    ImageTypeUC::Pointer physical_image;
+};
+struct ReferenceJobs {
+    QPointer<StudyViewWidget> owner;
+    unsigned long long generation;
+    std::vector<ReferenceJob> jobs;
+    std::size_t next = 0;
+    std::size_t next_slice = 0;
+};
+static bool slice_rectangle(const ImageSlice *slice, mpr_geometry::PlaneRectangle &rect)
+{
+    if (!slice) return false;
+    mpr_geometry::Vector3 corners[4];
+    for (int i=0; i<4; ++i) corners[i]={slice->fv[3*i],slice->fv[3*i+1],slice->fv[3*i+2]};
+    return mpr_geometry::rectangle_from_corners(corners,rect);
+}
+static void process_reference_jobs(const std::shared_ptr<ReferenceJobs> &state)
+{
+    if (!state->owner || state->generation != state->owner->property("referenceGeneration").toULongLong()) return;
+    std::size_t budget=48;
+    while (budget && state->next < state->jobs.size()) {
+        const ReferenceJob &job=state->jobs[state->next];
+        if (state->next_slice >= job.source->corners.size()) {
+            ++state->next; state->next_slice=0; continue;
+        }
+        const auto &saved=job.source->corners[state->next_slice++];
+        --budget;
+        if (!job.view || !job.view->isVisible() || !job.physical_image) continue;
+        mpr_geometry::Vector3 corners[4];
+        for (int i=0; i<4; ++i) corners[i]=saved[i];
+        mpr_geometry::PlaneRectangle source;
+        mpr_geometry::ReferenceSegment segment;
+        if (!mpr_geometry::rectangle_from_corners(corners,source) ||
+            !mpr_geometry::bounded_reference_segment(job.target,source,segment)) continue;
+        itk::Point<float,3> a,b;
+        a[0]=segment.start.x; a[1]=segment.start.y; a[2]=segment.start.z;
+        b[0]=segment.end.x; b[1]=segment.end.y; b[2]=segment.end.z;
 #if ITK_VERSION_MAJOR >= 5
-							const auto index =
-								image->template TransformPhysicalPointToContinuousIndex<float>(point);
+        const auto ia=job.physical_image->template TransformPhysicalPointToContinuousIndex<float>(a);
+        const auto ib=job.physical_image->template TransformPhysicalPointToContinuousIndex<float>(b);
 #else
-							itk::ContinuousIndex<float, 3> index;
-							image->TransformPhysicalPointToContinuousIndex(point, index);
+        itk::ContinuousIndex<float,3> ia,ib;
+        job.physical_image->TransformPhysicalPointToContinuousIndex(a,ia);
+        job.physical_image->TransformPhysicalPointToContinuousIndex(b,ib);
 #endif
-							hits.push_back({ { index[0], index[1] } });
-						}
-					}
-				}
-			}
-		}
-		if (hits.size() == 2)
-		{
-			const int R = static_cast<int>(refs.at(u)->di->R * 255.0f);
-			const int G = static_cast<int>(refs.at(u)->di->G * 255.0f);
-			const int B = static_cast<int>(refs.at(u)->di->B * 255.0f);
-			QPen pen;
-			pen.setBrush(QBrush(QColor(R, G, B, 255)));
-			pen.setStyle(Qt::SolidLine);
-			pen.setWidth(0);
-			QPainterPath pp;
-			pp.moveTo(hits.at(0).at(0), hits.at(0).at(1));
-			pp.lineTo(hits.at(1).at(0), hits.at(1).at(1));
-			QGraphicsPathItem * g = new QGraphicsPathItem();
-			g->setPen(pen);
-			g->setPath(pp);
-			w->graphicsview->scene()->addItem(g);
-			w->graphicsview->collision_paths.push_back(g);
-		}
-	}
-	for (int j = 0; j < tmp_objects.size(); ++j)
-	{
-		if (tmp_objects[j])
-		{
-			btCollisionObject * k = tmp_objects[j];
-			if (k->getUserPointer())
-			{
-				int * p = static_cast<int*>(k->getUserPointer());
-				delete [] p;
-			}
-			g_collisionWorld->removeCollisionObject(k);
-			delete tmp_objects[j];
-			tmp_objects[j] = nullptr;
-		}
-	}
-	for (int j = 0; j < tmp_shapes.size(); ++j)
-	{
-		if (tmp_shapes[j])
-		{
-			delete tmp_shapes[j];
-			tmp_shapes[j] = nullptr;
-		}
-	}
-#ifdef ALIZA_PERF_COLLISION
-	const auto t1 = std::chrono::steady_clock::now();
-	const auto ts = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0);
-	std::cout << ts.count() << " ns" << std::endl;
-#endif
+        QPainterPath path; path.moveTo(ia[0],ia[1]); path.lineTo(ib[0],ib[1]);
+        QPen pen(job.source->color); pen.setWidth(3); pen.setCosmetic(true);
+        QGraphicsPathItem *item=new QGraphicsPathItem(path);
+        item->setPen(pen); job.view->scene()->addItem(item); job.view->collision_paths.push_back(item);
+    }
+    if (state->next < state->jobs.size())
+        QTimer::singleShot(0,state->owner.data(),[state]() { process_reference_jobs(state); });
+}
 }
 
 void check_slice_collisions2(StudyViewWidget * w)
@@ -543,7 +444,6 @@ void check_slice_collisions2(StudyViewWidget * w)
 	const auto t0 = std::chrono::steady_clock::now();
 #endif
 	if (!w) return;
-	if (!g_collisionWorld) return;
 	const int widgets_size = w->widgets.size();
 	for (int x = 0; x < widgets_size; ++x)
 	{
@@ -552,165 +452,145 @@ void check_slice_collisions2(StudyViewWidget * w)
 			w->widgets[x]->graphicswidget->graphicsview->clear_collision_paths();
 		}
 	}
-	for (int x = 0; x < widgets_size; ++x)
+	const auto generation = w->property("referenceGeneration").toULongLong() + 1;
+	w->setProperty("referenceGeneration", QVariant::fromValue<qulonglong>(generation));
+	if (reference_mode == -1 || !show_all_study_collisions || !w->get_scouts()) return;
+
+	// Identify active widget (the only source that emanates cut planes to other viewports)
+	const int active_id = w->get_active_id();
+	int active_idx = -1;
+	for (int i = 0; i < widgets_size; ++i)
 	{
-		if (w->widgets.at(x) && w->widgets.at(x)->graphicswidget)
+		auto frame = w->widgets.at(i);
+		if (frame && frame->isVisible() && frame->graphicswidget && frame->graphicswidget->image_container.image3D)
 		{
-			if (w->widgets.at(x)->graphicswidget->image_container.image3D)
+			if (frame->graphicswidget->get_id() == active_id)
 			{
-				const ImageVariant * v = w->widgets.at(x)->graphicswidget->image_container.image3D;
-				if (!v) continue;
-				if (v->frame_of_ref_uid.isEmpty()) continue;
-				const int slices_size = v->di->image_slices.size();
-				if (v->di->idimz != slices_size) continue;
-				const int z =
-					w->widgets.at(x)->graphicswidget->image_container.selected_z_slice_ext;
-				if (z >= slices_size) continue;
-				btAlignedObjectArray<btStaticPlaneShape*> tmp_shapes;
-				btAlignedObjectArray<btCollisionObject*> tmp_objects;
-				tmp_shapes.resize(0);
-				tmp_objects.resize(0);
-				add_slice_collision_plane(
-					v,
-					z,
-					2,
-					tmp_shapes,
-					tmp_objects);
-#if 1
-				// TODO check
-				g_collisionWorld->performDiscreteCollisionDetection();
-#endif
-				for (int u = 0; u < widgets_size; ++u)
-				{
-					if (!(w->widgets.at(u) && w->widgets.at(u)->graphicswidget)) continue;
-					const ImageVariant * v1 = w->widgets.at(u)->graphicswidget->image_container.image3D;
-					if (!v1) continue;
-					if (v->id == v1->id) continue;
-					if (!((v->study_uid == v1->study_uid) && (v->frame_of_ref_uid == v1->frame_of_ref_uid)))
-					{
-						continue;
-					}
-					const int z1 = w->widgets.at(u)->graphicswidget->image_container.selected_z_slice_ext;
-					const int v1_slices_size = v1->di->image_slices.size();
-					if (v1->di->idimz != v1_slices_size) continue;
-					if (z1 >= v1_slices_size) continue;
-					if (check_slices_parallel(v, z, v1, z1)) continue;
-					std::vector< std::array<float, 2> > hits;
-					for (int q = 0; q < 4; ++q)
-					{
-						int k0 = 0, k1 = 1, k2 = 2, k3 = 3, k4 = 4, k5 = 5;
-						switch (q)
-						{
-						case 1:
-							k0 = 3;
-							k1 = 4;
-							k2 = 5;
-							k3 = 6;
-							k4 = 7;
-							k5 = 8;
-							break;
-						case 2:
-							k0 = 6;
-							k1 = 7;
-							k2 = 8;
-							k3 = 9;
-							k4 = 10;
-							k5 = 11;
-							break;
-						case 3:
-							k0 = 9;
-							k1 = 10;
-							k2 = 11;
-							k3 = 0;
-							k4 = 1;
-							k5 = 2;
-							break;
-						default:
-							break;
-						}
-						const btVector3 from(
-							v1->di->image_slices.at(z1)->fv[k0],
-							v1->di->image_slices.at(z1)->fv[k1],
-							v1->di->image_slices.at(z1)->fv[k2]);
-						const btVector3 to(
-							v1->di->image_slices.at(z1)->fv[k3],
-							v1->di->image_slices.at(z1)->fv[k4],
-							v1->di->image_slices.at(z1)->fv[k5]);
-						ClosestRayResultCallback1 rayResult(from, to);
-						g_collisionWorld->rayTest(from, to, rayResult);
-						if (rayResult.hasHit())
-						{
-							const btCollisionObject * o = rayResult.m_collisionObject;
-							if (o)
-							{
-								const int * usrP = static_cast<int*>(o->getUserPointer());
-								if (usrP && usrP[0] == v->id)
-								{
-									const btVector3 hit = rayResult.m_hitPointWorld;
-									ImageTypeUC::Pointer image = ImageTypeUC::New();
-									const bool image_ok = ContourUtils::phys_space_from_slice(v, z, image);
-									if (image_ok)
-									{
-										itk::Point<float, 3> point;
-										point[0] = hit.getX();
-										point[1] = hit.getY();
-										point[2] = hit.getZ();
-#if ITK_VERSION_MAJOR >= 5
-										const auto index =
-											image->template TransformPhysicalPointToContinuousIndex<float>(point);
-#else
-										itk::ContinuousIndex<float, 3> index;
-										image->TransformPhysicalPointToContinuousIndex(point, index);
-#endif
-										hits.push_back({ { index[0], index[1] } });
-									}
-								}
-							}
-						}
-					}
-					if (hits.size() == 2)
-					{
-						const int R = static_cast<int>(v1->di->R * 255.0f);
-						const int G = static_cast<int>(v1->di->G * 255.0f);
-						const int B = static_cast<int>(v1->di->B * 255.0f);
-						QPen pen;
-						pen.setBrush(QBrush(QColor(R, G, B, 255)));
-						pen.setStyle(Qt::SolidLine);
-						pen.setWidth(0);
-						QPainterPath pp;
-						pp.moveTo(hits.at(0).at(0), hits.at(0).at(1));
-						pp.lineTo(hits.at(1).at(0), hits.at(1).at(1));
-						QGraphicsPathItem * g = new QGraphicsPathItem();
-						g->setPen(pen);
-						g->setPath(pp);
-						w->widgets[x]->graphicswidget->graphicsview->scene()->addItem(g);
-						w->widgets[x]->graphicswidget->graphicsview->collision_paths.push_back(g);
-					}
-				}
-				for (int j = 0; j < tmp_objects.size(); ++j)
-				{
-					if (tmp_objects[j])
-					{
-						btCollisionObject * k = tmp_objects[j];
-						if (k->getUserPointer())
-						{
-							int * p = static_cast<int*>(k->getUserPointer());
-							delete [] p;
-						}
-						g_collisionWorld->removeCollisionObject(k);
-						delete tmp_objects[j];
-						tmp_objects[j] = nullptr;
-					}
-				}
-				for (int j = 0; j < tmp_shapes.size(); ++j)
-				{
-					if (tmp_shapes[j])
-					{
-						delete tmp_shapes[j];
-						tmp_shapes[j] = nullptr;
-					}
-				}
+				active_idx = i;
+				break;
 			}
+		}
+	}
+	if (active_idx < 0)
+	{
+		for (int i = 0; i < widgets_size; ++i)
+		{
+			auto frame = w->widgets.at(i);
+			if (frame && frame->isVisible() && frame->graphicswidget && frame->graphicswidget->image_container.image3D)
+			{
+				active_idx = i;
+				break;
+			}
+		}
+	}
+	if (active_idx < 0) return;
+
+	auto active_frame = w->widgets.at(active_idx);
+	const ImageVariant * source = active_frame->graphicswidget->image_container.image3D;
+	if (!source || !source->di || source->frame_of_ref_uid.isEmpty()) return;
+	const int count = static_cast<int>(source->di->image_slices.size());
+	if (count <= 0 || source->di->idimz != count) return;
+
+	const int z_src = active_frame->graphicswidget->image_container.selected_z_slice_ext;
+	if (z_src < 0 || z_src >= count) return;
+
+	QColor source_color(
+		static_cast<int>(source->di->R * 255),
+		static_cast<int>(source->di->G * 255),
+		static_cast<int>(source->di->B * 255));
+	if (!source_color.isValid() || (source_color.red() == 0 && source_color.green() == 0 && source_color.blue() == 0))
+	{
+		source_color = QColor(255, 170, 0); // Amber/orange default
+	}
+
+	// Slices to project from active source
+	std::vector<std::array<mpr_geometry::Vector3, 4>> source_slice_corners;
+	if (reference_mode == 0) // Corte atual
+	{
+		const ImageSlice * slice = source->di->image_slices.at(z_src);
+		if (slice)
+		{
+			std::array<mpr_geometry::Vector3, 4> corners;
+			for (int i = 0; i < 4; ++i) corners[i] = { slice->fv[3*i], slice->fv[3*i+1], slice->fv[3*i+2] };
+			source_slice_corners.push_back(corners);
+		}
+	}
+	else if (reference_mode == 1) // First and last
+	{
+		for (int k = 0; k < count; ++k)
+		{
+			if (k != 0 && k != count - 1) continue;
+			const ImageSlice * slice = source->di->image_slices.at(k);
+			if (!slice) continue;
+			std::array<mpr_geometry::Vector3, 4> corners;
+			for (int i = 0; i < 4; ++i) corners[i] = { slice->fv[3*i], slice->fv[3*i+1], slice->fv[3*i+2] };
+			source_slice_corners.push_back(corners);
+		}
+	}
+	else if (reference_mode == 2) // All slices
+	{
+		for (int k = 0; k < count; ++k)
+		{
+			const ImageSlice * slice = source->di->image_slices.at(k);
+			if (!slice) continue;
+			std::array<mpr_geometry::Vector3, 4> corners;
+			for (int i = 0; i < 4; ++i) corners[i] = { slice->fv[3*i], slice->fv[3*i+1], slice->fv[3*i+2] };
+			source_slice_corners.push_back(corners);
+		}
+	}
+
+	if (source_slice_corners.empty()) return;
+
+	// Project onto each other visible target viewport
+	for (int u = 0; u < widgets_size; ++u)
+	{
+		if (u == active_idx) continue; // Active viewport never shows lines from itself
+		auto target_frame = w->widgets.at(u);
+		if (!target_frame || !target_frame->isVisible() || !target_frame->graphicswidget) continue;
+		const ImageVariant * target = target_frame->graphicswidget->image_container.image3D;
+		if (!target || !target->di || target->id == source->id ||
+		    target->study_uid != source->study_uid ||
+		    target->frame_of_ref_uid != source->frame_of_ref_uid) continue;
+
+		const int target_z = target_frame->graphicswidget->image_container.selected_z_slice_ext;
+		if (target_z < 0 || target_z >= static_cast<int>(target->di->image_slices.size())) continue;
+
+		mpr_geometry::PlaneRectangle targetRect;
+		if (!slice_rectangle(target->di->image_slices.at(target_z), targetRect)) continue;
+
+		ImageTypeUC::Pointer physical = ImageTypeUC::New();
+		if (!ContourUtils::phys_space_from_slice(target, target_z, physical)) continue;
+
+		for (const auto & src_corners : source_slice_corners)
+		{
+			mpr_geometry::Vector3 corners[4];
+			for (int i = 0; i < 4; ++i) corners[i] = src_corners[i];
+			mpr_geometry::PlaneRectangle sourceRect;
+			mpr_geometry::ReferenceSegment segment;
+			if (!mpr_geometry::rectangle_from_corners(corners, sourceRect) ||
+			    !mpr_geometry::bounded_reference_segment(targetRect, sourceRect, segment)) continue;
+
+			itk::Point<float, 3> a, b;
+			a[0] = segment.start.x; a[1] = segment.start.y; a[2] = segment.start.z;
+			b[0] = segment.end.x; b[1] = segment.end.y; b[2] = segment.end.z;
+#if ITK_VERSION_MAJOR >= 5
+			const auto ia = physical->template TransformPhysicalPointToContinuousIndex<float>(a);
+			const auto ib = physical->template TransformPhysicalPointToContinuousIndex<float>(b);
+#else
+			itk::ContinuousIndex<float, 3> ia, ib;
+			physical->TransformPhysicalPointToContinuousIndex(a, ia);
+			physical->TransformPhysicalPointToContinuousIndex(b, ib);
+#endif
+			QPainterPath path;
+			path.moveTo(ia[0], ia[1]);
+			path.lineTo(ib[0], ib[1]);
+			QPen pen(source_color);
+			pen.setWidth(3);
+			pen.setCosmetic(true);
+			QGraphicsPathItem * item = new QGraphicsPathItem(path);
+			item->setPen(pen);
+			target_frame->graphicswidget->graphicsview->scene()->addItem(item);
+			target_frame->graphicswidget->graphicsview->collision_paths.push_back(item);
 		}
 	}
 #ifdef ALIZA_PERF_COLLISION
@@ -1978,6 +1858,7 @@ void Aliza::disconnect_tools()
 
 void Aliza::set_selected_slice2D_m(int j)
 {
+	if (graphicswidget_m && graphicswidget_m->handle_mpr_slider(j)) return;
 	ImageVariant * v = get_selected_image();
 	if (v)
 	{
@@ -2105,6 +1986,7 @@ void Aliza::set_selected_slice2D_m(int j)
 
 void Aliza::set_selected_slice2D_y(int j)
 {
+	if (graphicswidget_y && graphicswidget_y->handle_mpr_slider(j)) return;
 	ImageVariant * v = get_selected_image();
 	if (!v) return;
 	v->di->selected_y_slice = j;
@@ -2133,6 +2015,7 @@ void Aliza::set_selected_slice2D_y(int j)
 
 void Aliza::set_selected_slice2D_x(int j)
 {
+	if (graphicswidget_x && graphicswidget_x->handle_mpr_slider(j)) return;
 	ImageVariant * v = get_selected_image();
 	if (!v) return;
 	v->di->selected_x_slice = j;
@@ -2166,6 +2049,46 @@ bool Aliza::check_3d()
 		return true;
 	}
 	return false;
+}
+
+// A volume can be loaded before the OpenGL widget is first shown. In that
+// case the DICOM loader intentionally skipped the GPU texture. Build it on
+// demand after the context has been initialized, without re-reading the study.
+bool Aliza::prepare_selected_volume_3d()
+{
+	ImageVariant * v = get_selected_image();
+	if (!check_3d() || !v || !v->di) return false;
+	if (!v->di->opengl_ok)
+	{
+		// Only ordinary monochrome CT/MR volumes are enabled here. Segmentation,
+		// tomosynthesis and other objects retain the loader's exclusions.
+		const bool supported_sop =
+			v->sop == QString("1.2.840.10008.5.1.4.1.1.2") ||
+			v->sop == QString("1.2.840.10008.5.1.4.1.1.2.1") ||
+			v->sop == QString("1.2.840.10008.5.1.4.1.1.2.2") ||
+			v->sop == QString("1.2.840.10008.5.1.4.1.1.4") ||
+			v->sop == QString("1.2.840.10008.5.1.4.1.1.4.1") ||
+			v->sop == QString("1.2.840.10008.5.1.4.1.1.4.4");
+		if (!supported_sop ||
+			v->image_type < 0 || v->image_type >= 10 ||
+			!v->equi || v->di->idimz < 2)
+			return false;
+		const bool previous_skip_texture = v->di->skip_texture;
+		GLWidget * previous_gl = v->di->gl;
+		v->di->opengl_ok = true;
+		v->di->skip_texture = false;
+		v->di->set_glwidget(glwidget);
+		const bool loaded = load_3d(v, false, true, true, true);
+		if (!loaded || !v->di->image_3dtex || v->di->skip_texture)
+		{
+			if (v->di->image_3dtex) v->di->close(false);
+			v->di->opengl_ok = false;
+			v->di->skip_texture = previous_skip_texture;
+			v->di->set_glwidget(previous_gl);
+			return false;
+		}
+	}
+	return v->di->image_3dtex != 0 && !v->di->skip_texture;
 }
 
 bool Aliza::check_3d_visible()
@@ -2234,8 +2157,9 @@ void Aliza::set_histogram()
 	multiview = false;
 	histogram_mode = true;
 	graphicswidget_m->set_multiview(multiview);
-	const ImageVariant * v = get_selected_image_const();
-	if (v) histogramview->update__(v);
+	ImageVariant * v = get_selected_image();
+	if (v && v->histogram.isNull()) trigger_reload_histogram();
+	else if (v) histogramview->update__(v);
 }
 
 void Aliza::set_axis_zyx(bool rect_mode)
@@ -2734,6 +2658,10 @@ void Aliza::update_selection_common1(ImageVariant * v)
 			graphicswidget_x->clear_();
 		}
 		histogramview->update__(v);
+		// Defer the potentially expensive computation until selection handling
+		// finishes; the slot resolves the currently selected image again.
+		if (v && v->histogram.isNull())
+			QTimer::singleShot(0, this, SLOT(trigger_reload_histogram_if_needed()));
 	}
 	else
 	{
@@ -2759,6 +2687,10 @@ void Aliza::update_selection_common2(QListWidgetItem * s)
 	ImageVariant * v = k->get_image_from_item();
 	if (v)
 	{
+		// A different series may have been loaded before the 3D context existed.
+		// load_3d does not modify selection, avoiding recursive selection signals.
+		if (ok3d && check_3d_visible() && !v->di->opengl_ok)
+			prepare_selected_volume_3d();
 		selected_images.push_back(v);
 		if (v->image_type == 300) spect_images.push_back(v);
 		else tmp_images.push_back(k->get_image_from_item_const());
@@ -3051,6 +2983,12 @@ void Aliza::set_hide_zoom(bool t)
 void Aliza::set_histogram_mode(bool t)
 {
 	histogram_mode = t;
+}
+
+void Aliza::trigger_reload_histogram_if_needed()
+{
+	ImageVariant * v = get_selected_image();
+	if (histogram_mode && v && v->histogram.isNull()) trigger_reload_histogram();
 }
 
 void Aliza::trigger_reload_histogram()
@@ -4174,10 +4112,18 @@ void Aliza::toggle_zlock_one(bool t)
 	calculate_bb();
 }
 
+void Aliza::set_reference_mode(int mode)
+{
+    if (mode < -1 || mode > 2) return;
+    reference_mode = mode;
+    if (studyview) check_slice_collisions2(studyview);
+}
+
 void Aliza::toggle_collisions(bool t)
 {
 	show_all_study_collisions = t;
 	check_slice_collisions(get_selected_image_const(), graphicswidget_m);
+	if (studyview && studyview->get_scouts()) check_slice_collisions2(studyview);
 }
 
 void Aliza::trigger_image_color()
@@ -5341,6 +5287,7 @@ void Aliza::adjust_wl_delta(double delta_center, double delta_width)
 {
 	ImageVariant * v = get_selected_image();
 	if (!v || !v->di) return;
+	v->di->lock_level2D = false;
 	double new_center = v->di->us_window_center + delta_center;
 	double new_width  = v->di->us_window_width + delta_width;
 	if (new_width < 1.0) new_width = 1.0;
@@ -5363,15 +5310,14 @@ void Aliza::adjust_wl_delta(double delta_center, double delta_width)
 		toolbox2D->width_horizontalSlider->setValue(static_cast<int>(new_width));
 	}
 	if (check_3d() && check_3d_visible()) glwidget->updateGL();
-	if (check_2d_visible())
+	if (graphicswidget_m)
 	{
-		if (!graphicswidget_m->run__)
-			graphicswidget_m->update_image(0, false);
-		if (multiview)
-		{
-			graphicswidget_y->update_image(0, false);
-			graphicswidget_x->update_image(0, false);
-		}
+		graphicswidget_m->update_image(0, false);
+	}
+	if (multiview)
+	{
+		if (graphicswidget_y) graphicswidget_y->update_image(0, false);
+		if (graphicswidget_x) graphicswidget_x->update_image(0, false);
 	}
 }
 

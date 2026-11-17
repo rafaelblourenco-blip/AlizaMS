@@ -4,6 +4,12 @@
 #define SILENCE_QT_LOGGING
 #define TMP_USE_GL_TEST
 
+#ifdef _WIN32
+extern "C" {
+__declspec(dllexport) unsigned long NvOptimusEnablement = 1;
+__declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
+}
+#endif
 #include "alizams_version.h"
 #include <QtGlobal>
 #if QT_VERSION >= QT_VERSION_CHECK(5,0,0)
@@ -340,6 +346,11 @@ int main(int argc, char * argv[])
 	if (!force_disable_opengl)
 	{
 		QApplication::setAttribute(Qt::AA_UseDesktopOpenGL);
+#if QT_VERSION >= QT_VERSION_CHECK(5,4,0)
+		// Keep QOpenGLWidget resources valid when the 3D view moves to its
+		// own top-level window.
+		QApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
+#endif
 #ifdef USE_SET_DEFAULT_GL_FORMAT
 		QSurfaceFormat format;
 		format.setRenderableType(QSurfaceFormat::OpenGL);
@@ -387,6 +398,7 @@ int main(int argc, char * argv[])
 		}
 	}
 #endif
+	app.setProperty("aliza_disable_opengl", force_disable_opengl);
 	app.setOrganizationName(QString("Aliza"));
 	app.setOrganizationDomain(QString("aliza-dicom-viewer.com"));
 	app.setApplicationName(QString("AlizaMS"));

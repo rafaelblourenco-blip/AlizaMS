@@ -1,6 +1,7 @@
 #include "radiantconfigdialog.h"
 #include "studygraphicsview.h"
 #include "studygraphicswidget.h"
+#include "studyviewwidget.h"
 #include "graphicsview.h"
 #include "aliza.h"
 #include "radiantinputdispatcher.h"
@@ -10,6 +11,7 @@
 #include <QStyleOptionButton>
 #include <QGraphicsSceneMouseEvent>
 #include <QApplication>
+#include <QClipboard>
 #include <QList>
 #include <QGraphicsDropShadowEffect>
 #include "colorspace/colorspace.h"
@@ -20,12 +22,14 @@ StudyGraphicsView::StudyGraphicsView(StudyGraphicsWidget * p)
 	setAcceptDrops(false);
 	setFrameStyle(QFrame::Plain);
 	setFrameShape(QFrame::NoFrame);
+	setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+	setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 	QGraphicsScene * scene_ = new QGraphicsScene(this);
 	scene_->setItemIndexMethod(QGraphicsScene::NoIndex);
 	const QRectF rectf(0, 0, 100, 100);
 	scene_->setSceneRect(rectf);
 	setScene(scene_);
-	QColor bc = qApp->palette().color(QPalette::Window);
+	QColor bc(Qt::black);
 	setBackgroundBrush(QBrush(bc));
 	shutter_color = std::move(bc);
 	//setCacheMode(CacheNone);
@@ -94,6 +98,17 @@ void StudyGraphicsView::keyPressEvent(QKeyEvent * e)
 	{
 		switch (e->key())
 		{
+		case Qt::Key_C:
+			{
+				QPixmap pix = viewport()->grab();
+				if (!pix.isNull())
+				{
+					QApplication::clipboard()->setPixmap(pix);
+					QApplication::clipboard()->setImage(pix.toImage());
+				}
+				e->accept();
+				return;
+			}
 		case Qt::Key_0:
 			parent->update_image(1);
 			return;
@@ -212,6 +227,7 @@ void StudyGraphicsView::keyReleaseEvent(QKeyEvent * e)
 
 void StudyGraphicsView::wheelEvent(QWheelEvent * e)
 {
+	parent->set_active();
 	if (RadiantInputDispatcher::instance()->handle_study_wheel(this, e, parent))
 	{
 		return;
@@ -630,6 +646,16 @@ void StudyGraphicsView::mousePressEvent(QMouseEvent * e)
 
 void StudyGraphicsView::mouseDoubleClickEvent(QMouseEvent * e)
 {
+	if (e->button() == Qt::LeftButton && parent)
+	{
+		StudyViewWidget * sv = parent->get_studyview();
+		if (sv)
+		{
+			sv->toggle_single_mode(parent->get_id());
+			e->accept();
+			return;
+		}
+	}
 	QGraphicsView::mouseDoubleClickEvent(e);
 }
 
@@ -731,7 +757,7 @@ void StudyGraphicsView::set_win_last_position(int x, int y)
 
 void StudyGraphicsView::update_background_color()
 {
-	QColor bc = qApp->palette().color(QPalette::Window);
+	QColor bc(Qt::black);
 	setBackgroundBrush(QBrush(bc));
 	shutter_color = std::move(bc);
 }

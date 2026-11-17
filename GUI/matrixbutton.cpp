@@ -1,13 +1,10 @@
 #include "matrixbutton.h"
 #include <QMenu>
-#include <QFrame>
-#include <QGridLayout>
 #include <QPainter>
 #include <QPen>
 #include <QEvent>
 #include <QPaintEvent>
 #include <QMouseEvent>
-#include <QWidgetAction>
 #include <QPalette>
 #include <QFontMetrics>
 #include <QTextOption>
@@ -18,84 +15,50 @@
 
 namespace
 {
-
-constexpr int rsize = 5;
-constexpr int csize = 5;
-
+constexpr int max_rows = 5;
+constexpr int max_cols = 5;
 }
 
-class DimsChooser : public QFrame
-{
-public:
-	DimsChooser(MatrixButton*, QAction*);
-	QSize sizeHint() const override;
-	void mouseMoveEvent(QMouseEvent*) override;
-#if QT_VERSION >= QT_VERSION_CHECK(6,0,0)
-	void enterEvent(QEnterEvent*) override;
-#else
-	void enterEvent(QEvent*) override;
-#endif
-	void leaveEvent(QEvent*) override;
-	void mouseReleaseEvent(QMouseEvent*) override;
-	void paintEvent(QPaintEvent*) override;
-
-private:
-	int           m_column;
-	int           m_row;
-	double        m_column_w;
-	double        m_row_h;
-	int           m_left_margin;
-	int           m_top_margin;
-	int           m_plus_w;
-	int           m_plus_h;
-	MatrixButton *m_button;
-	QAction      *m_action;
-};
-
-DimsChooser::DimsChooser(MatrixButton * b, QAction * a)
+DimsChooser::DimsChooser(QWidget * parent, QAction * a)
 	:
-	QFrame(),
+	QFrame(parent),
 	m_column(0),
 	m_row(0),
-	m_column_w(30),
-	m_button(b),
+	m_column_w(26.0),
+	m_row_h(26.0),
+	m_left_margin(10),
+	m_top_margin(10),
 	m_action(a)
 {
-	setFrameShadow(Sunken);
-	setBackgroundRole(QPalette::Base);
-	setFrameShape(StyledPanel);
+	setFrameShadow(Plain);
+	setFrameShape(NoFrame);
 	setMouseTracking(true);
-	QFontMetrics metrics(font());
-#if QT_VERSION >= QT_VERSION_CHECK(5,14,0)
-	m_column_w = metrics.horizontalAdvance(QString("XXXX")) + 2;
-#else
-	m_column_w = metrics.width(QString("XXXX")) + 2;
-#endif
-	m_row_h = metrics.height() + 2;
-#if QT_VERSION >= QT_VERSION_CHECK(5,15,0)
-	const QMargins m = contentsMargins();
-	m_left_margin = m.left() + 4;
-	m_top_margin  = m.top() + 4;
-#else
-	getContentsMargins(&m_left_margin, &m_top_margin, &m_plus_w, &m_plus_h);
-	m_left_margin = 4;
-	m_top_margin  = 4;
-#endif
-	m_plus_w = m_left_margin + 5;
-	m_plus_h = m_top_margin  + 5;
 }
 
 QSize DimsChooser::sizeHint() const
 {
-	return QSize(m_plus_w + csize * m_column_w, m_plus_h + rsize * m_row_h);
+	// margins + 5 cells + text banner below
+	const int w = m_left_margin * 2 + static_cast<int>(max_cols * m_column_w);
+	const int h = m_top_margin * 2 + static_cast<int>(max_rows * m_row_h) + 24;
+	return QSize(w, h);
 }
 
 void DimsChooser::mouseMoveEvent(QMouseEvent * e)
 {
 	const QPoint p = e->pos();
-	m_column = qMin(7.0, ((p.x() - m_left_margin) / m_column_w));
-	m_row    = qMin(7.0, ((p.y() - m_top_margin)  / m_row_h));
-	repaint();
+	int c = static_cast<int>((p.x() - m_left_margin) / m_column_w);
+	int r = static_cast<int>((p.y() - m_top_margin) / m_row_h);
+	if (c < 0) c = 0;
+	if (c >= max_cols) c = max_cols - 1;
+	if (r < 0) r = 0;
+	if (r >= max_rows) r = max_rows - 1;
+
+	if (m_column != c || m_row != r)
+	{
+		m_column = c;
+		m_row = r;
+		update();
+	}
 }
 
 #if QT_VERSION >= QT_VERSION_CHECK(6,0,0)
@@ -104,82 +67,75 @@ void DimsChooser::enterEvent(QEnterEvent * e)
 void DimsChooser::enterEvent(QEvent * e)
 #endif
 {
-	m_action->activate(QAction::Hover);
+	if (m_action) m_action->activate(QAction::Hover);
 	QFrame::enterEvent(e);
 }
 
 void DimsChooser::leaveEvent(QEvent*)
 {
-	m_column = -1;
-	m_row    = -1;
-	repaint();
+	// Keep previous selection or reset? Reset to 0,0
+	update();
 }
 
 void DimsChooser::mouseReleaseEvent(QMouseEvent * e)
 {
 	if (contentsRect().contains(e->pos()))
 	{
-		m_button->emit_matrix_selected(m_row + 1, m_column + 1);
+		emit grid_selected(m_row + 1, m_column + 1);
 	}
 	QFrame::mouseReleaseEvent(e);
 }
 
 void DimsChooser::paintEvent(QPaintEvent * e)
 {
-	QFrame::paintEvent(e);
+	Q_UNUSED(e);
 	QPainter painter(this);
-	painter.setRenderHint(QPainter::Antialiasing);
-	painter.fillRect(contentsRect(), palette().brush(QPalette::Base));
-	painter.translate(m_left_margin, m_top_margin);
-	painter.translate(0.5, 0.5);
-	QPen pen = painter.pen();
-	pen.setWidthF(0.5);
-	painter.setPen(pen);
-	painter.fillRect(
-		QRectF(
-			0.0,
-			0.0,
-			(m_column + 1) * m_column_w,
-			(m_row    + 1) * m_row_h),
-		palette().brush(QPalette::Highlight));
-	for(int c = 0; c <= csize; ++c)
+	painter.setRenderHint(QPainter::Antialiasing, false);
+
+	// Background
+	painter.fillRect(rect(), QColor(32, 40, 52));
+
+	// Draw grid of cells
+	const QColor cellBorder(70, 85, 105);
+	const QColor cellEmpty(42, 52, 68);
+	const QColor cellHover(28, 120, 212);
+	const QColor cellHoverBorder(80, 170, 255);
+
+	const double cellPad = 2.0;
+
+	for (int r = 0; r < max_rows; ++r)
 	{
-		painter.drawLine(
-			QPointF(c * m_column_w, 0.0),
-			QPointF(c * m_column_w, rsize * m_row_h));
+		for (int c = 0; c < max_cols; ++c)
+		{
+			const double x = m_left_margin + c * m_column_w;
+			const double y = m_top_margin + r * m_row_h;
+			const QRectF cellRect(x + cellPad, y + cellPad, m_column_w - cellPad * 2, m_row_h - cellPad * 2);
+
+			const bool isSelected = (r <= m_row && c <= m_column);
+			painter.fillRect(cellRect, isSelected ? cellHover : cellEmpty);
+			painter.setPen(isSelected ? cellHoverBorder : cellBorder);
+			painter.drawRect(cellRect);
+		}
 	}
-	for(int r = 0; r <= rsize; ++r)
-	{
-		painter.drawLine(
-			QPointF(0.0, r * m_row_h),
-			QPointF(csize  * m_column_w, r * m_row_h));
-	}
-	QTextOption o(Qt::AlignCenter);
-	o.setUseDesignMetrics(true);
-	painter.drawText(
-		QRectF(
-			0.0,
-			0.0,
-			m_column_w,
-			m_row_h),
-		QString("%1x%2")
-			.arg(m_column + 1)
-			.arg(m_row + 1),
-		o);
-	painter.end();
+
+	// Bottom description banner: "X x Y"
+	painter.setRenderHint(QPainter::Antialiasing, true);
+	painter.setPen(Qt::white);
+	QFont font = painter.font();
+	font.setFamily("Segoe UI");
+	font.setPointSize(9);
+	font.setBold(true);
+	painter.setFont(font);
+
+	const int bannerY = m_top_margin + static_cast<int>(max_rows * m_row_h) + 4;
+	const QRectF textRect(0, bannerY, width(), 20);
+	painter.drawText(textRect, Qt::AlignCenter, QString("%1 x %2").arg(m_row + 1).arg(m_column + 1));
 }
 
-class DimsChooserAction : public QWidgetAction
+DimsChooserAction::DimsChooserAction(QObject * parent)
+	: QWidgetAction(parent)
 {
-public:
-	DimsChooserAction(MatrixButton*);
-	DimsChooser * m_widget;
-};
-
-DimsChooserAction::DimsChooserAction(MatrixButton * b)
-	: QWidgetAction(nullptr)
-{
-	m_widget = new DimsChooser(b, this);
+	m_widget = new DimsChooser(nullptr, this);
 	setDefaultWidget(m_widget);
 }
 
@@ -203,7 +159,12 @@ MatrixButton::MatrixButton(float si)
 	p_menu->addAction(p_action);
 	p_menu->addSeparator();
 #endif
-	p_menu->addAction(new DimsChooserAction(this));
+	DimsChooserAction * chooserAct = new DimsChooserAction(p_menu);
+	connect(chooserAct->widget(), &DimsChooser::grid_selected, this, [this](int r, int c) {
+		p_menu->hide();
+		emit matrix_selected(r, c);
+	});
+	p_menu->addAction(chooserAct);
 	setMenu(p_menu);
 	setPopupMode(InstantPopup);
 }
@@ -213,4 +174,3 @@ void MatrixButton::emit_matrix_selected(int r, int c)
 	p_menu->hide();
 	emit matrix_selected(r, c);
 }
-

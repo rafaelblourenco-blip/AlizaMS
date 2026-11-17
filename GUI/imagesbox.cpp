@@ -148,6 +148,18 @@ ImagesBox::ImagesBox(float si)
 	listWidget->setFlow(QListView::TopToBottom);
 	listWidget->setDragDropMode(QAbstractItemView::DragOnly);
 	listWidget->installEventFilter(this);
+	if (listWidget->viewport())
+		listWidget->viewport()->installEventFilter(this);
+	connect(listWidget, &QListWidget::itemPressed, this, [this](QListWidgetItem * item) {
+		if (QApplication::keyboardModifiers() & Qt::ControlModifier)
+		{
+			ListWidgetItem2 * lwi = static_cast<ListWidgetItem2*>(item);
+			if (lwi)
+			{
+				emit open_series_split(lwi->get_id());
+			}
+		}
+	});
 	//
 	width_doubleSpinBox = new QDoubleSpinBox();
 	//
@@ -184,6 +196,7 @@ ImagesBox::ImagesBox(float si)
 	listWidget->addAction(actionClearUnChek);
 	listWidget->addAction(actionColor);
 	listWidget->addAction(actionDICOMMeta);
+	listWidget->addAction(actionContours);
 #if 0
 	listWidget->addAction(actionTmp);
 #endif
@@ -213,7 +226,6 @@ ImagesBox::ImagesBox(float si)
 	toolButton7->setMenu(studyMenu);
 	toolButton7->setPopupMode(QToolButton::InstantPopup);
 	toolbar->addWidget(toolButton7);
-	toolbar->addAction(actionReloadHistogram);
 	toolbar->addAction(actionClear);
 	toolbar->addAction(actionClearAll);
 	QWidget * spacer = new QWidget(this);
@@ -275,8 +287,9 @@ ImagesBox::ImagesBox(float si)
 	QWidget * spacer2 = new QWidget(this);
 	spacer2->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
 	toolbar2->addWidget(spacer2);
-	toolbar2->addAction(actionContours);
-	toolbar2->addAction(actionInfo);
+	// Image details are available through DICOM metadata; preserve the
+	// thumbnail area and expose contours through its context menu.
+	toolbar2_frame->hide();
 	//
 	map['R'] = QString("right to left");
 	map['L'] = QString("left to right");
@@ -881,17 +894,21 @@ void ImagesBox::update_background_color(bool b)
 
 bool ImagesBox::eventFilter(QObject * watched, QEvent * event)
 {
-	if (watched == listWidget && event->type() == QEvent::MouseButtonPress)
+	if ((watched == listWidget || (listWidget && watched == listWidget->viewport())) && event->type() == QEvent::MouseButtonPress)
 	{
 		QMouseEvent * me = static_cast<QMouseEvent*>(event);
-		if (me->button() == Qt::LeftButton && (me->modifiers() & Qt::ControlModifier))
+		if (me->button() == Qt::LeftButton && (me->modifiers() & Qt::ControlModifier || QApplication::keyboardModifiers() & Qt::ControlModifier))
 		{
-			QListWidgetItem * item = listWidget->itemAt(me->pos());
+			QPoint p = me->pos();
+			QListWidgetItem * item = listWidget->itemAt(p);
 			if (item)
 			{
 				ListWidgetItem2 * lwi = static_cast<ListWidgetItem2*>(item);
-				emit open_series_split(lwi->get_id());
-				return true;
+				if (lwi)
+				{
+					emit open_series_split(lwi->get_id());
+					return true;
+				}
 			}
 		}
 	}

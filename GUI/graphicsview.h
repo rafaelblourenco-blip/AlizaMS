@@ -18,6 +18,8 @@
 #include <QPainter>
 #include <QMap>
 #include <QList>
+#include <QVector>
+#include <QGraphicsSimpleTextItem>
 #include "rectitem.h"
 #include "handleitem.h"
 #include "graphicspathitem.h"
@@ -93,6 +95,9 @@ public:
 	void clear_measurements();
 	void delete_selected_measurement();
 	void reset_reference_line_angles();
+	void recover_mpr_views();
+	void refresh_mpr_views();
+	void sync_mpr_sliders();
 	double get_ref_angle_h() const { return m_ref_angle_h; }
 	double get_ref_angle_v() const { return m_ref_angle_v; }
 	void set_ref_angle_h(double a) { m_ref_angle_h = a; }
@@ -121,6 +126,23 @@ signals:
 	void bb_changed();
 
 private:
+	QGraphicsPathItem * extra_measure_path{};
+	QGraphicsSimpleTextItem * extra_measure_label{};
+	QVector<QPointF> extra_points;
+	QList<QGraphicsPathItem*> saved_measure_paths;
+	QList<QGraphicsSimpleTextItem*> saved_measure_labels;
+	const ImageVariant *extra_volume{};
+	double extra_plane[9]{};
+	void clear_extra_measurements();
+	int extra_tool{-1};
+	int extra_slice[3]{-1,-1,-1};
+	double extra_ref_h{0}, extra_ref_v{0};
+	int extra_slab_mode{0};
+	double extra_slab_thickness{0};
+	bool extra_drag{false};
+	bool extra_complete{false};
+	void update_extra_measurement(const QPointF &, bool);
+	bool extra_measurement_point_valid(const QPointF &) const;
 	int old_win_pos_x{};
 	int old_win_pos_y{};
 	int new_win_pos_x{};
@@ -149,6 +171,7 @@ private:
 	int m_hover_ref_end{0};
 	QPointF m_rotation_pivot_scene;
 	double m_initial_mouse_angle{0.0};
+	double m_applied_drag_angle{0.0};
 	double m_start_rotation_angle{0.0};
 	QPointF m_handle_h1_scene;
 	QPointF m_handle_h2_scene;
@@ -157,6 +180,7 @@ private:
 	void set_win_old_position(int, int);
 	void set_win_new_position(int, int);
 	void set_win_last_position(int, int);
+	double reference_line_angle(const QPoint &) const;
 	void lines_at(double,double);
 	void measure();
 	void get_pixel_value(double,double);

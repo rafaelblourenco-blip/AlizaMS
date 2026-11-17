@@ -112,6 +112,7 @@ public:
 	void toggle_rect(bool);
 	bool check_3d();
 	bool check_3d_visible();
+	bool prepare_selected_volume_3d();
 	bool check_2d_visible();
 	void set_view2d_mouse_modus(short);
 	void set_show_frames_3d(bool);
@@ -137,6 +138,7 @@ public:
 	void reset_3d();
 	void set_uniq_string(const QString &);
 	void toggle_collisions(bool);
+	void set_reference_mode(int);
 	void update_slice_from_animation(const ImageVariant*);
 	QString load_dicom_file(const QString&, QProgressDialog*);
 	void remove_from_studyview(int);
@@ -188,6 +190,7 @@ public slots:
 	void reset_rect2();
 	void reset_level();
 	void trigger_reload_histogram();
+	void trigger_reload_histogram_if_needed();
 	void create_group();
 	void remove_group();
 	void start_3D_anim();

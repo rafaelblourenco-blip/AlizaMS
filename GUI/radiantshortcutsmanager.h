@@ -10,6 +10,7 @@
 #include "radiantinputdispatcher.h"
 #include "radiantoverlaywindow.h"
 
+class QTimer;
 class MainWindow;
 class Aliza;
 
@@ -172,6 +173,11 @@ public slots:
     void mpr3d_maximize();
     void mpr3d_reset();
 
+    // 14. Series Synchronization & Clipboard
+    void cycle_series_sync();
+    void update_sync_series_ui();
+    void copy_active_image_to_clipboard();
+
 private slots:
     void on_dispatcher_tool_changed(RadiantTool tool);
 
@@ -188,6 +194,11 @@ private:
     QAction * action_pacs_download{nullptr};
     QAction * action_export{nullptr};
     QAction * action_grid{nullptr};
+    QAction * action_sync_series{nullptr};
+    QAction * act_sync_cycle_header{nullptr};
+    QAction * act_sync_slice_pos{nullptr};
+    QAction * act_sync_zoom_pan{nullptr};
+    QAction * act_sync_window{nullptr};
     QAction * action_text_overlay{nullptr};
     QAction * action_mouse_config{nullptr};
     QAction * action_wl{nullptr};
@@ -199,6 +210,7 @@ private:
     QAction * action_cine{nullptr};
     QAction * action_mpr{nullptr};
     QAction * action_3d_vr{nullptr};
+    QAction * action_lut{nullptr};
     QAction * action_dicom_meta{nullptr};
     QAction * action_help{nullptr};
     QAction * action_config{nullptr};
@@ -224,7 +236,7 @@ private:
     bool cached_menu_visible{true};
     bool cached_dock_visible{true};
     bool cached_status_visible{true};
-    int  cine_timer_id{0};
+    QTimer * cine_timer{nullptr};
     int  current_fps{15};
 };
 

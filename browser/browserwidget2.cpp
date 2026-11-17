@@ -538,7 +538,15 @@ void BrowserWidget2::dropEvent(QDropEvent * e)
 			const QString extractedDir = ZipUtils::extractZipToTemp(f, nullptr, &errorMsg);
 			if (!extractedDir.isEmpty())
 			{
-				open_dicom_dir2(extractedDir);
+				const QString foundDicomdir = ZipUtils::findDicomdir(extractedDir);
+				if (!foundDicomdir.isEmpty())
+				{
+					open_DICOMDIR2(foundDicomdir);
+				}
+				else
+				{
+					open_dicom_dir2(extractedDir);
+				}
 			}
 		}
 		else

@@ -25,6 +25,8 @@
 #include <QOpenGLVersionFunctionsFactory>
 #endif
 #include <QApplication>
+#include <QPainter>
+#include <QTimer>
 #include <QSettings>
 #include <QMessageBox>
 #include <QFileDialog>
@@ -33,6 +35,8 @@
 #include <QProcess>
 #include "commonutils.h"
 #include <cmath>
+#include <algorithm>
+#include <utility>
 #include <iostream>
 #include <chrono>
 #include "luts.h"
@@ -310,28 +314,265 @@ void GLWidget::initializeGL()
 
 void GLWidget::paintGL()
 {
-	paint__();
+    paint__();
+    if (sculpt_tool && sculpt_outline.size() > 1)
+    {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(QPen(Qt::yellow, 2, Qt::DashLine));
+        painter.drawPolyline(sculpt_outline);
+        if (!sculpt_drawing && sculpt_outline.size() > 2)
+            painter.drawLine(sculpt_outline.last(), sculpt_outline.first());
+    }
 }
 
 void GLWidget::resizeGL(int width, int height)
 {
+    if (!sculpt_outline.isEmpty()) sculpt_transform_valid = false;
 	resize__(width, height);
+}
+
+void GLWidget::sync_3d_display()
+{
+	ImageVariant * image = (selected_images__ && !selected_images__->empty())
+		? selected_images__->at(0) : nullptr;
+	if (image != volume_display_image)
+	{
+		volume_display_image = image;
+		sculpt_mask.clear(); sculpt_outline.clear(); sculpt_transform_valid = false;
+		volume_lut = 0;
+		if (image && image->di)
+		{
+			volume_window_center = image->di->window_center;
+			volume_window_width = std::max(1e-6, static_cast<double>(image->di->window_width));
+		}
+	}
+}
+
+void GLWidget::reset_3d_display()
+{
+    set_3d_cine(false);
+	volume_display_image = nullptr;
+	sculpt_mask.clear(); sculpt_outline.clear();
+	sync_3d_display();
+	updateGL();
+}
+
+void GLWidget::set_3d_lut(int lut)
+{
+	sync_3d_display();
+	if (lut >= 0 && lut <= 8) volume_lut = lut;
+	updateGL();
+}
+
+bool GLWidget::set_3d_window_normalized(double center, double width)
+{
+    if (!std::isfinite(center) || !std::isfinite(width) || width <= 0.0) return false;
+    sync_3d_display();
+    if (!volume_display_image || !volume_display_image->di) return false;
+    volume_window_center = center;
+    volume_window_width = std::max(1e-6, width);
+    updateGL();
+    return true;
+}
+
+void GLWidget::set_3d_interaction(int mode)
+{
+    if (mode < 0 || mode > 5) return;
+    volume_interaction = mode;
+    volume_window_tool = mode == 4;
+    sculpt_tool = mode == 5;
+    sculpt_drawing = false;
+    sculpt_outline.clear();
+    if (sculpt_tool)
+    {
+        set_3d_cine(false);
+        set_view_rc();
+    }
+    setFocus();
+    updateGL();
+}
+
+void GLWidget::set_sculpt_tool(bool enabled)
+{
+    set_3d_interaction(enabled ? 5 : 0);
+}
+
+void GLWidget::set_3d_cine(bool enabled)
+{
+    if (!enabled)
+    {
+        if (volume_cine_timer) volume_cine_timer->stop();
+        volume_cine_clock.invalidate();
+        return;
+    }
+    if (sculpt_tool) return;
+    if (!volume_cine_timer)
+    {
+        volume_cine_timer = new QTimer(this);
+        volume_cine_timer->setInterval(33);
+        connect(volume_cine_timer, &QTimer::timeout, this, [this]() {
+            if (!volume_cine_timer->isActive() || !volume_cine_clock.isValid()) return;
+            const qint64 elapsed = volume_cine_clock.restart();
+            if (!isVisible() || !camera || !sculpt_outline.isEmpty()) return;
+            const float seconds = static_cast<float>(std::min<qint64>(elapsed, 100)) / 1000.0f;
+            camera->m_trackball = normalize(camera->m_trackball * Quat::rotationY(30.0f * CAMERA_D2R * seconds));
+            updateGL();
+        });
+    }
+    volume_cine_clock.start();
+    volume_cine_timer->start();
+}
+
+bool GLWidget::is_3d_cine_running() const
+{
+    return volume_cine_timer && volume_cine_timer->isActive();
+}
+
+void GLWidget::bind_sculpt_mask(GLuint program)
+{
+    const bool enabled = sculpt_texture != 0 && !sculpt_mask.empty() && selected_images__ && selected_images__->size() == 1;
+    glUniform1i(glGetUniformLocation(program, "sculptEnabled"), enabled ? 1 : 0);
+    glUniform1i(glGetUniformLocation(program, "sculptMask"), 7);
+    glActiveTexture(GL_TEXTURE7);
+    glBindTexture(GL_TEXTURE_3D, sculpt_texture);
+    glActiveTexture(GL_TEXTURE0);
+}
+
+void GLWidget::capture_sculpt_transform(const float *mvp)
+{
+    if (!sculpt_outline.isEmpty())
+    {
+        if (width() != sculpt_snapshot_width || height() != sculpt_snapshot_height)
+            sculpt_transform_valid = false;
+        for (int i = 0; i < 16; ++i)
+            if (std::abs(mvp[i] - sculpt_camera_snapshot[i]) > 1e-5f) sculpt_transform_valid = false;
+        return;
+    }
+    std::copy(mvp, mvp + 16, sculpt_camera_snapshot);
+    sculpt_snapshot_width = width();
+    sculpt_snapshot_height = height();
+    GLfloat positions[54], texcoords[54];
+    glBindBuffer(GL_ARRAY_BUFFER, raycastcube0[0]);
+    glGetBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(positions), positions);
+    glBindBuffer(GL_ARRAY_BUFFER, raycastcube0[1]);
+    glGetBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(texcoords), texcoords);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    int origin = -1, axis[3] = {-1, -1, -1};
+    for (int i = 0; i < 18; ++i)
+        if (texcoords[3*i] == 0 && texcoords[3*i+1] == 0 && texcoords[3*i+2] == 0) { origin = i; break; }
+    if (origin < 0) { sculpt_transform_valid = false; return; }
+    for (int i = 0; i < 18; ++i)
+        for (int j = 0; j < 3; ++j)
+            if (texcoords[3*i+j] == 1 && texcoords[3*i+(j+1)%3] == 0 && texcoords[3*i+(j+2)%3] == 0) axis[j] = i;
+    if (axis[0] < 0 || axis[1] < 0 || axis[2] < 0) { sculpt_transform_valid = false; return; }
+    QMatrix4x4 object;
+    for (int row = 0; row < 3; ++row)
+    {
+        object(row,3) = positions[origin*3+row];
+        for (int col = 0; col < 3; ++col) object(row,col) = positions[axis[col]*3+row] - positions[origin*3+row];
+    }
+    QMatrix4x4 clip;
+    std::copy(mvp, mvp + 16, clip.data());
+    sculpt_texture_to_clip = clip * object;
+    sculpt_transform_valid = true;
+}
+
+void GLWidget::apply_sculpt(bool deleteInside)
+{
+    if (!sculpt_tool || sculpt_drawing || sculpt_outline.size() < 3 ||
+        !selected_images__ || selected_images__->size() != 1 || !selected_images__->at(0)) return;
+    // Force pending camera/viewport updates to render before accepting the cut.
+    repaint();
+    if (!sculpt_transform_valid || view == 0 || width() != sculpt_snapshot_width || height() != sculpt_snapshot_height)
+    {
+        sculpt_outline.clear();
+        updateGL();
+        QMessageBox::warning(this, tr("Bisturi 3D"), tr("A visualização mudou após o desenho. Desenhe novamente o contorno."));
+        return;
+    }
+    const DisplayInterface *di = selected_images__->at(0)->di;
+    if (!di || width() < 1 || height() < 1) return;
+    // The renderer may downsample the source before creating its 3D texture.
+    // Match the mask to the actual texture rather than the original image size.
+    GLint textureWidth = 0, textureHeight = 0, textureDepth = 0;
+    makeCurrent();
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_3D, di->image_3dtex);
+    glGetTexLevelParameteriv(GL_TEXTURE_3D, 0, GL_TEXTURE_WIDTH, &textureWidth);
+    glGetTexLevelParameteriv(GL_TEXTURE_3D, 0, GL_TEXTURE_HEIGHT, &textureHeight);
+    glGetTexLevelParameteriv(GL_TEXTURE_3D, 0, GL_TEXTURE_DEPTH, &textureDepth);
+    doneCurrent();
+    if (textureWidth < 1 || textureHeight < 1 || textureDepth < 1)
+    {
+        QMessageBox::warning(this, tr("Bisturi 3D"), tr("Textura 3D indisponível para recorte."));
+        return;
+    }
+    QPolygonF clipOutline;
+    for (const QPointF &p : sculpt_outline)
+        clipOutline << QPointF(2.0 * p.x() / width() - 1.0, 1.0 - 2.0 * p.y() / height());
+    SculptMask nextMask;
+    try { nextMask = sculpt_mask; }
+    catch (const std::exception &) {
+        QMessageBox::warning(this, tr("Bisturi 3D"), tr("Memória insuficiente para preparar o recorte."));
+        return;
+    }
+    if (!nextMask.apply(textureWidth, textureHeight, textureDepth, sculpt_texture_to_clip, clipOutline, deleteInside))
+    {
+        QMessageBox::warning(this, tr("Bisturi 3D"), tr("Não foi possível aplicar o recorte. Desenhe uma área válida e confira a memória disponível."));
+        return;
+    }
+    makeCurrent();
+    glGetError(); // Clear a previous error before checking this upload.
+    GLuint nextTexture = 0;
+    glGenTextures(1, &nextTexture);
+    glActiveTexture(GL_TEXTURE7);
+    glBindTexture(GL_TEXTURE_3D, nextTexture);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+    GLint oldUnpackAlignment = 4;
+    glGetIntegerv(GL_UNPACK_ALIGNMENT, &oldUnpackAlignment);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexImage3D(GL_TEXTURE_3D, 0, GL_R8, textureWidth, textureHeight, textureDepth, 0, GL_RED, GL_UNSIGNED_BYTE, nextMask.data().data());
+    const GLenum uploadError = glGetError();
+    glPixelStorei(GL_UNPACK_ALIGNMENT, oldUnpackAlignment);
+    if (uploadError != GL_NO_ERROR || !nextTexture)
+    {
+        if (nextTexture) glDeleteTextures(1, &nextTexture);
+        glActiveTexture(GL_TEXTURE0);
+        doneCurrent();
+        QMessageBox::warning(this, tr("Bisturi 3D"), tr("Não foi possível carregar a máscara na GPU. O recorte anterior foi preservado."));
+        return;
+    }
+    if (sculpt_texture) glDeleteTextures(1, &sculpt_texture);
+    sculpt_texture = nextTexture;
+    sculpt_mask = std::move(nextMask);
+    glActiveTexture(GL_TEXTURE0);
+    doneCurrent();
+    sculpt_outline.clear();
+    updateGL();
 }
 
 void GLWidget::mousePressEvent(QMouseEvent * e)
 {
 	e->accept();
-	const Qt::KeyboardModifiers mods = QApplication::keyboardModifiers();
+    if (sculpt_tool && view == 0 && e->button() == Qt::LeftButton)
+    {
+        QMessageBox::information(this, tr("Bisturi 3D"), tr("Selecione Raycast ou MIP antes de desenhar o recorte."));
+        return;
+    }
+    if (sculpt_tool && !sculpt_outline.isEmpty() && e->button() != Qt::LeftButton) return;
+    if (sculpt_tool && e->button() == Qt::LeftButton)
+    {
+        sculpt_outline.clear(); sculpt_outline << e->pos(); sculpt_drawing = true; updateGL(); return;
+    }
 	if (e->buttons() & Qt::LeftButton)
 	{
-		if (mods & Qt::ShiftModifier)
-		{
-			lastPanPos = e->pos();
-		}
-		else
-		{
-			lastPos = e->pos();
-		}
+        // Keep all gesture origins current even if Shift changes mid-drag.
+        lastPanPos = lastPosScale = lastPos = e->pos();
 		if (adjust) timer1.start();
 	}
 	else if ((e->buttons() & Qt::MiddleButton) || (e->buttons() & Qt::BackButton))
@@ -353,6 +594,8 @@ void GLWidget::mousePressEvent(QMouseEvent * e)
 void GLWidget::mouseReleaseEvent(QMouseEvent * e)
 {
 	e->accept();
+    if (sculpt_tool && sculpt_drawing && e->button() == Qt::LeftButton)
+    { sculpt_outline << e->pos(); sculpt_drawing = false; updateGL(); return; }
 	if (adjust &&
 		(e->button() == Qt::LeftButton || e->button() == Qt::MiddleButton || e->button() == Qt::RightButton || e->button() == Qt::BackButton))
 	{
@@ -363,20 +606,61 @@ void GLWidget::mouseReleaseEvent(QMouseEvent * e)
 void GLWidget::mouseMoveEvent(QMouseEvent * e)
 {
 	e->accept();
+    if (sculpt_tool && sculpt_drawing && (e->buttons() & Qt::LeftButton))
+    { if (sculpt_outline.isEmpty() || QLineF(sculpt_outline.last(), e->pos()).length() >= 2.0) sculpt_outline << e->pos(); updateGL(); return; }
 	if (adjust && (timer1.isValid() && timer1.elapsed() < timer1_min))
 	{
 		return;
 	}
 	const Qt::KeyboardModifiers mods = QApplication::keyboardModifiers();
+	if (volume_window_tool && !(mods & Qt::ShiftModifier) && (e->buttons() & Qt::LeftButton))
+	{
+		sync_3d_display();
+		const QPoint delta = e->pos() - lastPos;
+		const double sensitivity = std::max(1e-3, volume_window_width) / 200.0;
+		volume_window_width = std::max(1e-6, volume_window_width + delta.x() * sensitivity);
+		volume_window_center -= delta.y() * sensitivity;
+		lastPos = lastPanPos = lastPosScale = e->pos();
+		if (adjust) timer1.start();
+		updateGL();
+		return;
+	}
 	if (e->buttons() & Qt::LeftButton)
 	{
-		if (mods & Qt::ShiftModifier)
+        if (!(mods & Qt::ShiftModifier) && volume_interaction == 1)
+        {
+            const QPoint p = e->pos();
+            const QPointF center(width() * 0.5, height() * 0.5);
+            const QPointF from = QPointF(lastPos) - center, to = QPointF(p) - center;
+            double angle = (p.x() - lastPos.x()) * 0.01;
+            if (QLineF(QPointF(), from).length() > 8.0 && QLineF(QPointF(), to).length() > 8.0)
+                angle = std::atan2(to.y(), to.x()) - std::atan2(from.y(), from.x());
+            if (angle > CAMERA_PI) angle -= CAMERA_2PI;
+            if (angle < -CAMERA_PI) angle += CAMERA_2PI;
+            camera->m_trackball = normalize(camera->m_trackball * Quat::rotationZ(static_cast<float>(angle)));
+            lastPos = lastPanPos = lastPosScale = p;
+            if (adjust) timer1.start();
+            updateGL();
+            return;
+        }
+        if (!(mods & Qt::ShiftModifier) && volume_interaction == 3)
+        {
+            const QPoint p = e->pos();
+            const int dy = lastPosScale.y() - p.y();
+            ortho_size = std::max(0.001f, ortho_size - static_cast<float>(dy));
+            position_z = std::max(0.001f, position_z - static_cast<float>(dy));
+            lastPos = lastPanPos = lastPosScale = p;
+            if (adjust) timer1.start();
+            updateGL();
+            return;
+        }
+		if ((mods & Qt::ShiftModifier) || volume_interaction == 2)
 		{
 			const QPoint p = e->pos();
 			const int deltax = p.x() - lastPanPos.x();
 			const int deltay = p.y() - lastPanPos.y();
 			set_pan_delta(deltax, deltay);
-			lastPanPos = p;
+			lastPos = lastPanPos = lastPosScale = p;
 			if (adjust) timer1.start();
 			updateGL();
 		}
@@ -385,7 +669,7 @@ void GLWidget::mouseMoveEvent(QMouseEvent * e)
 			const QPoint p = e->pos();
 			set_win_old_position(lastPos.x(), lastPos.y());
 			set_win_new_position(p.x(), p.y());
-			lastPos = p;
+			lastPos = lastPanPos = lastPosScale = p;
 			if (adjust) timer1.start();
 			updateGL();
 		}
@@ -396,7 +680,7 @@ void GLWidget::mouseMoveEvent(QMouseEvent * e)
 		const int deltax = p.x() - lastPanPos.x();
 		const int deltay = p.y() - lastPanPos.y();
 		set_pan_delta(deltax, deltay);
-		lastPanPos = p;
+		lastPos = lastPanPos = lastPosScale = p;
 		if (adjust) timer1.start();
 		updateGL();
 	}
@@ -410,7 +694,7 @@ void GLWidget::mouseMoveEvent(QMouseEvent * e)
 		else ortho_size = tmp0;
 		if (tmp1 < 0.001f) position_z = 0.001f;
 		else position_z = tmp1;
-		lastPosScale = p;
+		lastPos = lastPanPos = lastPosScale = p;
 		if (adjust) timer1.start();
 		updateGL();
 	}
@@ -419,6 +703,7 @@ void GLWidget::mouseMoveEvent(QMouseEvent * e)
 void GLWidget::wheelEvent(QWheelEvent * e)
 {
 	e->accept();
+    if (sculpt_tool && !sculpt_outline.isEmpty()) return;
 	double incr = 4.0;
 	if (Qt::ControlModifier == QApplication::keyboardModifiers())
 	{
@@ -454,6 +739,9 @@ void GLWidget::wheelEvent(QWheelEvent * e)
 
 void GLWidget::keyPressEvent(QKeyEvent * e)
 {
+    if (sculpt_tool && !sculpt_outline.isEmpty() && (e->key() == Qt::Key_Delete || e->key() == Qt::Key_Escape))
+    { apply_sculpt(e->key() == Qt::Key_Delete); e->accept(); return; }
+    if (sculpt_tool && !sculpt_outline.isEmpty()) { e->accept(); return; }
 	bool update_ = false;
 	switch (e->key())
 	{
@@ -855,9 +1143,9 @@ void GLWidget::init_()
 	letterl = nullptr;
 	pan_x = 0;
 	pan_y = 0;
-	clear_color_r = 0.9f;
-	clear_color_g = 0.9f;
-	clear_color_b = 0.9f;
+	clear_color_r = 0.0f;
+	clear_color_g = 0.0f;
+	clear_color_b = 0.0f;
 }
 
 GLWidget::~GLWidget()
@@ -870,6 +1158,7 @@ void GLWidget::close_()
 	if (no_opengl3) return;
 	if (!opengl_init_done) return;
 	makeCurrent();
+	if (sculpt_texture) { glDeleteTextures(1, &sculpt_texture); sculpt_texture = 0; }
 	if (gradient1 > 0) { glDeleteTextures(1, &gradient1); gradient1 = 0; }
 	if (gradient2 > 0) { glDeleteTextures(1, &gradient2); gradient2 = 0; }
 	if (gradient3 > 0) { glDeleteTextures(1, &gradient3); gradient3 = 0; }
@@ -1882,6 +2171,7 @@ void GLWidget::paint_raycaster(int mode) // 0 -- intensity, 1 -- MIP
 	if (!selected_images__) return;
 	if (selected_images__->empty()) return;
 	if (!selected_images__->at(0)) return;
+	sync_3d_display();
 	const DisplayInterface * di = selected_images__->at(0)->di;
 	if (!di->opengl_ok) return;
 	if ((!selected_images__->at(0)->equi &&
@@ -1972,6 +2262,7 @@ void GLWidget::paint_raycaster(int mode) // 0 -- intensity, 1 -- MIP
 	const Matrix4 mvp_aos = camera->m_projection * mv_aos;
 	VECTORMATH_ALIGNED(float mvp_aos_ptr[16]);
 	camera->matrix4_to_float(mvp_aos, mvp_aos_ptr);
+	if (sculpt_tool) capture_sculpt_transform(mvp_aos_ptr);
 	VECTORMATH_ALIGNED(float mv_aos_ptr[16]);
 	camera->matrix4_to_float(mv_aos, mv_aos_ptr);
 	//
@@ -2002,9 +2293,9 @@ void GLWidget::paint_raycaster(int mode) // 0 -- intensity, 1 -- MIP
 		}
 		// [0]
 		mparams[0]  = static_cast<float>(di->dimx); // X dim
-		mparams[1]  = static_cast<float>(di->window_center - di->window_width * 0.5);
-		mparams[2]  = static_cast<float>(di->window_center + di->window_width * 0.5);
-		mparams[3]  = static_cast<float>(di->window_width);
+		mparams[1]  = static_cast<float>(volume_window_center - volume_window_width * 0.5);
+		mparams[2]  = static_cast<float>(volume_window_center + volume_window_width * 0.5);
+		mparams[3]  = static_cast<float>(volume_window_width);
 		// [1]
 		mparams[4]  = static_cast<float>(di->idimz); // Z dim
 		mparams[5]  = from_slice_tmp; // z
@@ -2018,7 +2309,7 @@ void GLWidget::paint_raycaster(int mode) // 0 -- intensity, 1 -- MIP
 		// [3]
 		mparams[12] = alpha; // premultiply alpha
 		mparams[13] = brightness; // multiply color
-		mparams[14] = static_cast<float>(di->window_center);
+		mparams[14] = static_cast<float>(volume_window_center);
 		mparams[15] = 0.0f; // unused
 	}
 	//
@@ -2068,15 +2359,16 @@ void GLWidget::paint_raycaster(int mode) // 0 -- intensity, 1 -- MIP
 	glBindTexture(GL_TEXTURE_2D, frontface_tex);
 	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_3D, di->image_3dtex);
-	if (di->lut_function == 2)
+	if (false /* independent 3D display uses linear windowing */)
 	{
-		if (di->selected_lut == 0 || di->selected_lut > 8)
+		if (volume_lut == 0 || volume_lut > 8)
 		{
 			if (rect_selection)
 			{
 				if (mode == 0)
 				{
 					glUseProgram(raycast_shader_bb_sigm.program);
+                    bind_sculpt_mask(raycast_shader_bb_sigm.program);
 					glUniform4fv(raycast_shader_bb_sigm.location_mparams, 4, mparams);
 					glUniformMatrix4fv(raycast_shader_bb_sigm.location_mvp, 1, GL_FALSE, mvp_aos_ptr);
 					glUniform1i(raycast_shader_bb_sigm.location_sampler[0], 2);
@@ -2087,6 +2379,7 @@ void GLWidget::paint_raycaster(int mode) // 0 -- intensity, 1 -- MIP
 				else
 				{
 					glUseProgram(mip_shader_bb_sigm.program);
+                    bind_sculpt_mask(mip_shader_bb_sigm.program);
 					glUniform4fv(mip_shader_bb_sigm.location_mparams, 4, mparams);
 					glUniformMatrix4fv(mip_shader_bb_sigm.location_mvp, 1, GL_FALSE, mvp_aos_ptr);
 					glUniform1i(mip_shader_bb_sigm.location_sampler[0], 2);
@@ -2103,6 +2396,7 @@ void GLWidget::paint_raycaster(int mode) // 0 -- intensity, 1 -- MIP
 				if (mode == 0)
 				{
 					glUseProgram(raycast_shader_sigm.program);
+                    bind_sculpt_mask(raycast_shader_sigm.program);
 					glUniform4fv(raycast_shader_sigm.location_mparams, 4, mparams);
 					glUniformMatrix4fv(raycast_shader_sigm.location_mvp, 1, GL_FALSE, mvp_aos_ptr);
 					glUniform1i(raycast_shader_sigm.location_sampler[0], 2);
@@ -2113,6 +2407,7 @@ void GLWidget::paint_raycaster(int mode) // 0 -- intensity, 1 -- MIP
 				else
 				{
 					glUseProgram(mip_shader_sigm.program);
+                    bind_sculpt_mask(mip_shader_sigm.program);
 					glUniform4fv(mip_shader_sigm.location_mparams, 4, mparams);
 					glUniformMatrix4fv(mip_shader_sigm.location_mvp, 1, GL_FALSE, mvp_aos_ptr);
 					glUniform1i(mip_shader_sigm.location_sampler[0], 2);
@@ -2128,7 +2423,7 @@ void GLWidget::paint_raycaster(int mode) // 0 -- intensity, 1 -- MIP
 		else
 		{
 			glActiveTexture(GL_TEXTURE3);
-			switch (di->selected_lut)
+			switch (volume_lut)
 			{
 			case 1:
 				glBindTexture(GL_TEXTURE_1D, gradient1);
@@ -2162,6 +2457,7 @@ void GLWidget::paint_raycaster(int mode) // 0 -- intensity, 1 -- MIP
 				if (mode == 0)
 				{
 					glUseProgram(raycast_color_shader_bb_sigm.program);
+                    bind_sculpt_mask(raycast_color_shader_bb_sigm.program);
 					glUniform4fv(raycast_color_shader_bb_sigm.location_mparams, 4, mparams);
 					glUniformMatrix4fv(raycast_color_shader_bb_sigm.location_mvp, 1, GL_FALSE, mvp_aos_ptr);
 					glUniform1i(raycast_color_shader_bb_sigm.location_sampler[0], 2);
@@ -2173,6 +2469,7 @@ void GLWidget::paint_raycaster(int mode) // 0 -- intensity, 1 -- MIP
 				else
 				{
 					glUseProgram(mip_color_shader_bb_sigm.program);
+                    bind_sculpt_mask(mip_color_shader_bb_sigm.program);
 					glUniform4fv(mip_color_shader_bb_sigm.location_mparams, 4, mparams);
 					glUniformMatrix4fv(mip_color_shader_bb_sigm.location_mvp, 1, GL_FALSE, mvp_aos_ptr);
 					glUniform1i(mip_color_shader_bb_sigm.location_sampler[0], 2);
@@ -2190,6 +2487,7 @@ void GLWidget::paint_raycaster(int mode) // 0 -- intensity, 1 -- MIP
 				if (mode == 0)
 				{
 					glUseProgram(raycast_color_shader_sigm.program);
+                    bind_sculpt_mask(raycast_color_shader_sigm.program);
 					glUniform4fv(raycast_color_shader_sigm.location_mparams, 4, mparams);
 					glUniformMatrix4fv(raycast_color_shader_sigm.location_mvp, 1, GL_FALSE, mvp_aos_ptr);
 					glUniform1i(raycast_color_shader_sigm.location_sampler[0], 2);
@@ -2201,6 +2499,7 @@ void GLWidget::paint_raycaster(int mode) // 0 -- intensity, 1 -- MIP
 				else
 				{
 					glUseProgram(mip_color_shader_sigm.program);
+                    bind_sculpt_mask(mip_color_shader_sigm.program);
 					glUniform4fv(mip_color_shader_sigm.location_mparams, 4, mparams);
 					glUniformMatrix4fv(mip_color_shader_sigm.location_mvp, 1, GL_FALSE, mvp_aos_ptr);
 					glUniform1i(mip_color_shader_sigm.location_sampler[0], 2);
@@ -2217,13 +2516,14 @@ void GLWidget::paint_raycaster(int mode) // 0 -- intensity, 1 -- MIP
 	}
 	else
 	{
-		if (di->selected_lut == 0 || di->selected_lut > 8)
+		if (volume_lut == 0 || volume_lut > 8)
 		{
 			if (rect_selection)
 			{
 				if (mode == 0)
 				{
 					glUseProgram(raycast_shader_bb.program);
+                    bind_sculpt_mask(raycast_shader_bb.program);
 					glUniform4fv(raycast_shader_bb.location_mparams, 4, mparams);
 					glUniformMatrix4fv(raycast_shader_bb.location_mvp, 1, GL_FALSE, mvp_aos_ptr);
 					glUniform1i(raycast_shader_bb.location_sampler[0], 2);
@@ -2234,6 +2534,7 @@ void GLWidget::paint_raycaster(int mode) // 0 -- intensity, 1 -- MIP
 				else
 				{
 					glUseProgram(mip_shader_bb.program);
+                    bind_sculpt_mask(mip_shader_bb.program);
 					glUniform4fv(mip_shader_bb.location_mparams, 4, mparams);
 					glUniformMatrix4fv(mip_shader_bb.location_mvp, 1, GL_FALSE, mvp_aos_ptr);
 					glUniform1i(mip_shader_bb.location_sampler[0], 2);
@@ -2250,6 +2551,7 @@ void GLWidget::paint_raycaster(int mode) // 0 -- intensity, 1 -- MIP
 				if (mode == 0)
 				{
 					glUseProgram(raycast_shader.program);
+                    bind_sculpt_mask(raycast_shader.program);
 					glUniform4fv(raycast_shader.location_mparams, 4, mparams);
 					glUniformMatrix4fv(raycast_shader.location_mvp, 1, GL_FALSE, mvp_aos_ptr);
 					glUniform1i(raycast_shader.location_sampler[0], 2);
@@ -2260,6 +2562,7 @@ void GLWidget::paint_raycaster(int mode) // 0 -- intensity, 1 -- MIP
 				else
 				{
 					glUseProgram(mip_shader.program);
+                    bind_sculpt_mask(mip_shader.program);
 					glUniform4fv(mip_shader.location_mparams, 4, mparams);
 					glUniformMatrix4fv(mip_shader.location_mvp, 1, GL_FALSE, mvp_aos_ptr);
 					glUniform1i(mip_shader.location_sampler[0], 2);
@@ -2275,7 +2578,7 @@ void GLWidget::paint_raycaster(int mode) // 0 -- intensity, 1 -- MIP
 		else
 		{
 			glActiveTexture(GL_TEXTURE3);
-			switch (di->selected_lut)
+			switch (volume_lut)
 			{
 			case 1:
 				glBindTexture(GL_TEXTURE_1D, gradient1);
@@ -2309,6 +2612,7 @@ void GLWidget::paint_raycaster(int mode) // 0 -- intensity, 1 -- MIP
 				if (mode == 0)
 				{
 					glUseProgram(raycast_color_shader_bb.program);
+                    bind_sculpt_mask(raycast_color_shader_bb.program);
 					glUniform4fv(raycast_color_shader_bb.location_mparams, 4, mparams);
 					glUniformMatrix4fv(raycast_color_shader_bb.location_mvp, 1, GL_FALSE, mvp_aos_ptr);
 					glUniform1i(raycast_color_shader_bb.location_sampler[0], 2);
@@ -2320,6 +2624,7 @@ void GLWidget::paint_raycaster(int mode) // 0 -- intensity, 1 -- MIP
 				else
 				{
 					glUseProgram(mip_color_shader_bb.program);
+                    bind_sculpt_mask(mip_color_shader_bb.program);
 					glUniform4fv(mip_color_shader_bb.location_mparams, 4, mparams);
 					glUniformMatrix4fv(mip_color_shader_bb.location_mvp, 1, GL_FALSE, mvp_aos_ptr);
 					glUniform1i(mip_color_shader_bb.location_sampler[0], 2);
@@ -2337,6 +2642,7 @@ void GLWidget::paint_raycaster(int mode) // 0 -- intensity, 1 -- MIP
 				if (mode == 0)
 				{
 					glUseProgram(raycast_color_shader.program);
+                    bind_sculpt_mask(raycast_color_shader.program);
 					glUniform4fv(raycast_color_shader.location_mparams, 4, mparams);
 					glUniformMatrix4fv(raycast_color_shader.location_mvp, 1, GL_FALSE, mvp_aos_ptr);
 					glUniform1i(raycast_color_shader.location_sampler[0], 2);
@@ -2348,6 +2654,7 @@ void GLWidget::paint_raycaster(int mode) // 0 -- intensity, 1 -- MIP
 				else
 				{
 					glUseProgram(mip_color_shader.program);
+                    bind_sculpt_mask(mip_color_shader.program);
 					glUniform4fv(mip_color_shader.location_mparams, 4, mparams);
 					glUniformMatrix4fv(mip_color_shader.location_mvp, 1, GL_FALSE, mvp_aos_ptr);
 					glUniform1i(mip_color_shader.location_sampler[0], 2);
@@ -2403,6 +2710,7 @@ void GLWidget::paint_raycaster(int mode) // 0 -- intensity, 1 -- MIP
 
 void GLWidget::paint_volume()
 {
+	sync_3d_display();
 	const int selected_images_size = selected_images__->size();
 	if (selected_images_size < 1) return;
 	//
@@ -2628,9 +2936,9 @@ void GLWidget::paint_volume()
 		//
 		// [0]
 		mparams[0]  = 0.0f; // unused
-		mparams[1]  = static_cast<float>(di->window_center - di->window_width * 0.5);
-		mparams[2]  = static_cast<float>(di->window_center + di->window_width * 0.5);
-		mparams[3]  = static_cast<float>(di->window_width);
+		mparams[1]  = static_cast<float>(volume_window_center - volume_window_width * 0.5);
+		mparams[2]  = static_cast<float>(volume_window_center + volume_window_width * 0.5);
+		mparams[3]  = static_cast<float>(volume_window_width);
 		// [1]
 		mparams[4]  = 0.0f; // unused
 		mparams[5]  = 0.0f; // unused
@@ -2644,7 +2952,7 @@ void GLWidget::paint_volume()
 		// [3]
 		mparams[12] = alpha; // premultiply alpha
 		mparams[13] = brightness; // multiply color
-		mparams[14] = static_cast<float>(di->window_center);
+		mparams[14] = static_cast<float>(volume_window_center);
 		mparams[15] = 0.0f; // unused
 		//
 		if (draw_frames_3d)
@@ -2687,15 +2995,16 @@ void GLWidget::paint_volume()
 		//
 		glActiveTexture(GL_TEXTURE0);
 		glBindTexture(GL_TEXTURE_3D, di->image_3dtex);
-		if (di->selected_lut == 0 || di->selected_lut > 8)
+		if (volume_lut == 0 || volume_lut > 8)
 		{
 			if (rect_selection)
 			{
-				if (di->lut_function == 2)
+				if (false /* independent 3D display uses linear windowing */)
 				{
 					if (!di->transparency)
 					{
 						glUseProgram(c3d_shader_bb_clamp_sigm.program);
+                    bind_sculpt_mask(c3d_shader_bb_clamp_sigm.program);
 						glUniformMatrix4fv(c3d_shader_bb_clamp_sigm.location_mvp, 1, GL_FALSE, mvp_aos_ptr);
 						glUniform4fv(c3d_shader_bb_clamp_sigm.location_mparams, 4, mparams);
 						glUniform1i(c3d_shader_bb_clamp_sigm.location_sampler[0], 0);
@@ -2721,6 +3030,7 @@ void GLWidget::paint_volume()
 					else
 					{
 						glUseProgram(c3d_shader_bb_sigm.program);
+                    bind_sculpt_mask(c3d_shader_bb_sigm.program);
 						glUniformMatrix4fv(c3d_shader_bb_sigm.location_mvp, 1, GL_FALSE, mvp_aos_ptr);
 						glUniform4fv(c3d_shader_bb_sigm.location_mparams, 4, mparams);
 						glUniform1i(c3d_shader_bb_sigm.location_sampler[0], 0);
@@ -2749,6 +3059,7 @@ void GLWidget::paint_volume()
 					if (!di->transparency)
 					{
 						glUseProgram(c3d_shader_bb_clamp.program);
+                    bind_sculpt_mask(c3d_shader_bb_clamp.program);
 						glUniformMatrix4fv(c3d_shader_bb_clamp.location_mvp, 1, GL_FALSE, mvp_aos_ptr);
 						glUniform4fv(c3d_shader_bb_clamp.location_mparams, 4, mparams);
 						glUniform1i(c3d_shader_bb_clamp.location_sampler[0], 0);
@@ -2774,6 +3085,7 @@ void GLWidget::paint_volume()
 					else
 					{
 						glUseProgram(c3d_shader_bb.program);
+                    bind_sculpt_mask(c3d_shader_bb.program);
 						glUniformMatrix4fv(c3d_shader_bb.location_mvp, 1, GL_FALSE, mvp_aos_ptr);
 						glUniform4fv(c3d_shader_bb.location_mparams, 4, mparams);
 						glUniform1i(c3d_shader_bb.location_sampler[0], 0);
@@ -2800,11 +3112,12 @@ void GLWidget::paint_volume()
 			}
 			else
 			{
-				if (di->lut_function == 2)
+				if (false /* independent 3D display uses linear windowing */)
 				{
 					if (!di->transparency)
 					{
 						glUseProgram(c3d_shader_clamp_sigm.program);
+                    bind_sculpt_mask(c3d_shader_clamp_sigm.program);
 						glUniformMatrix4fv(c3d_shader_clamp_sigm.location_mvp, 1, GL_FALSE, mvp_aos_ptr);
 						glUniform4fv(c3d_shader_clamp_sigm.location_mparams, 4, mparams);
 						glUniform1i(c3d_shader_clamp_sigm.location_sampler[0], 0);
@@ -2830,6 +3143,7 @@ void GLWidget::paint_volume()
 					else
 					{
 						glUseProgram(c3d_shader_sigm.program);
+                    bind_sculpt_mask(c3d_shader_sigm.program);
 						glUniformMatrix4fv(c3d_shader_sigm.location_mvp, 1, GL_FALSE, mvp_aos_ptr);
 						glUniform4fv(c3d_shader_sigm.location_mparams, 4, mparams);
 						glUniform1i(c3d_shader_sigm.location_sampler[0], 0);
@@ -2858,6 +3172,7 @@ void GLWidget::paint_volume()
 					if (!di->transparency)
 					{
 						glUseProgram(c3d_shader_clamp.program);
+                    bind_sculpt_mask(c3d_shader_clamp.program);
 						glUniformMatrix4fv(c3d_shader_clamp.location_mvp, 1, GL_FALSE, mvp_aos_ptr);
 						glUniform4fv(c3d_shader_clamp.location_mparams, 4, mparams);
 						glUniform1i(c3d_shader_clamp.location_sampler[0], 0);
@@ -2883,6 +3198,7 @@ void GLWidget::paint_volume()
 					else
 					{
 						glUseProgram(c3d_shader.program);
+                    bind_sculpt_mask(c3d_shader.program);
 						glUniformMatrix4fv(c3d_shader.location_mvp, 1, GL_FALSE, mvp_aos_ptr);
 						glUniform4fv(c3d_shader.location_mparams, 4, mparams);
 						glUniform1i(c3d_shader.location_sampler[0], 0);
@@ -2911,7 +3227,7 @@ void GLWidget::paint_volume()
 		else
 		{
 			glActiveTexture(GL_TEXTURE3);
-			switch (di->selected_lut)
+			switch (volume_lut)
 			{
 			case 1:
 				glBindTexture(GL_TEXTURE_1D, gradient1);
@@ -2942,11 +3258,12 @@ void GLWidget::paint_volume()
 			}
 			if (rect_selection)
 			{
-				if (di->lut_function == 2)
+				if (false /* independent 3D display uses linear windowing */)
 				{
 					if (!di->transparency)
 					{
 						glUseProgram(c3d_shader_gradient_bb_clamp_sigm.program);
+                    bind_sculpt_mask(c3d_shader_gradient_bb_clamp_sigm.program);
 						glUniformMatrix4fv(c3d_shader_gradient_bb_clamp_sigm.location_mvp, 1, GL_FALSE, mvp_aos_ptr);
 						glUniform4fv(c3d_shader_gradient_bb_clamp_sigm.location_mparams, 4, mparams);
 						glUniform1i(c3d_shader_gradient_bb_clamp_sigm.location_sampler[0], 0);
@@ -2973,6 +3290,7 @@ void GLWidget::paint_volume()
 					else
 					{
 						glUseProgram(c3d_shader_gradient_bb_sigm.program);
+                    bind_sculpt_mask(c3d_shader_gradient_bb_sigm.program);
 						glUniformMatrix4fv(c3d_shader_gradient_bb_sigm.location_mvp, 1, GL_FALSE, mvp_aos_ptr);
 						glUniform4fv(c3d_shader_gradient_bb_sigm.location_mparams, 4, mparams);
 						glUniform1i(c3d_shader_gradient_bb_sigm.location_sampler[0], 0);
@@ -3002,6 +3320,7 @@ void GLWidget::paint_volume()
 					if (!di->transparency)
 					{
 						glUseProgram(c3d_shader_gradient_bb_clamp.program);
+                    bind_sculpt_mask(c3d_shader_gradient_bb_clamp.program);
 						glUniformMatrix4fv(c3d_shader_gradient_bb_clamp.location_mvp, 1, GL_FALSE, mvp_aos_ptr);
 						glUniform4fv(c3d_shader_gradient_bb_clamp.location_mparams, 4, mparams);
 						glUniform1i(c3d_shader_gradient_bb_clamp.location_sampler[0], 0);
@@ -3028,6 +3347,7 @@ void GLWidget::paint_volume()
 					else
 					{
 						glUseProgram(c3d_shader_gradient_bb.program);
+                    bind_sculpt_mask(c3d_shader_gradient_bb.program);
 						glUniformMatrix4fv(c3d_shader_gradient_bb.location_mvp, 1, GL_FALSE, mvp_aos_ptr);
 						glUniform4fv(c3d_shader_gradient_bb.location_mparams, 4, mparams);
 						glUniform1i(c3d_shader_gradient_bb.location_sampler[0], 0);
@@ -3055,11 +3375,12 @@ void GLWidget::paint_volume()
 			}
 			else
 			{
-				if (di->lut_function == 2)
+				if (false /* independent 3D display uses linear windowing */)
 				{
 					if (!di->transparency)
 					{
 						glUseProgram(c3d_shader_gradient_clamp_sigm.program);
+                    bind_sculpt_mask(c3d_shader_gradient_clamp_sigm.program);
 						glUniformMatrix4fv(c3d_shader_gradient_clamp_sigm.location_mvp, 1, GL_FALSE, mvp_aos_ptr);
 						glUniform4fv(c3d_shader_gradient_clamp_sigm.location_mparams, 4, mparams);
 						glUniform1i(c3d_shader_gradient_clamp_sigm.location_sampler[0], 0);
@@ -3086,6 +3407,7 @@ void GLWidget::paint_volume()
 					else
 					{
 						glUseProgram(c3d_shader_gradient_sigm.program);
+                    bind_sculpt_mask(c3d_shader_gradient_sigm.program);
 						glUniformMatrix4fv(c3d_shader_gradient_sigm.location_mvp, 1, GL_FALSE, mvp_aos_ptr);
 						glUniform4fv(c3d_shader_gradient_sigm.location_mparams, 4, mparams);
 						glUniform1i(c3d_shader_gradient_sigm.location_sampler[0], 0);
@@ -3115,6 +3437,7 @@ void GLWidget::paint_volume()
 					if (!di->transparency)
 					{
 						glUseProgram(c3d_shader_gradient_clamp.program);
+                    bind_sculpt_mask(c3d_shader_gradient_clamp.program);
 						glUniformMatrix4fv(c3d_shader_gradient_clamp.location_mvp, 1, GL_FALSE, mvp_aos_ptr);
 						glUniform4fv(c3d_shader_gradient_clamp.location_mparams, 4, mparams);
 						glUniform1i(c3d_shader_gradient_clamp.location_sampler[0], 0);
@@ -3141,6 +3464,7 @@ void GLWidget::paint_volume()
 					else
 					{
 						glUseProgram(c3d_shader_gradient.program);
+                    bind_sculpt_mask(c3d_shader_gradient.program);
 						glUniformMatrix4fv(c3d_shader_gradient.location_mvp, 1, GL_FALSE, mvp_aos_ptr);
 						glUniform4fv(c3d_shader_gradient.location_mparams, 4, mparams);
 						glUniform1i(c3d_shader_gradient.location_sampler[0], 0);
@@ -3352,9 +3676,10 @@ void GLWidget::set_view_mip()
 
 void GLWidget::set_clear_color(float red, float green, float blue)
 {
-	clear_color_r = red;
-	clear_color_g = green;
-	clear_color_b = blue;
+	(void)red; (void)green; (void)blue;
+	clear_color_r = 0.0f;
+	clear_color_g = 0.0f;
+	clear_color_b = 0.0f;
 }
 
 void GLWidget::set_show_cube(bool t)

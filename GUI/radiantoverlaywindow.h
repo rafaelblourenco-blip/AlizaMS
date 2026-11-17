@@ -10,6 +10,7 @@
 #include <QAction>
 #include <QActionGroup>
 #include <QMenu>
+#include "common/mprlayout.h"
 
 class MainWindow;
 
@@ -38,6 +39,9 @@ public:
 
 protected:
     void closeEvent(QCloseEvent * event) override;
+    void showEvent(QShowEvent * event) override;
+    void hideEvent(QHideEvent * event) override;
+    bool eventFilter(QObject * watched, QEvent * event) override;
 
 signals:
     void window_closed();
@@ -68,6 +72,10 @@ public slots:
 private:
     void setup_toolbar();
     void setup_mpr_toolbar();
+    void activate_oblique_interaction();
+    void set_mpr_tool(int mode);
+    void leave_mpr();
+    void apply_mpr_layout();
     void setup_3d_toolbar();
     QToolButton * create_menu_button(QAction * act, QMenu * menu, bool instantPopup = false);
 
@@ -76,6 +84,12 @@ private:
     QVBoxLayout  * main_layout{nullptr};
     QToolBar     * toolbar{nullptr};
     OverlayType    overlay_type{OverlayType::Generic};
+    mpr_layout::State mpr_layout_state;
+    bool mpr_rotate_volume{false};
+    bool mpr_rotation_dragging{false};
+    QPoint mpr_rotation_last;
+    int slab_menu_mode{0};
+    double slab_menu_thickness{5.0};
     QActionGroup * tool_action_group{nullptr};
 
     // MPR Actions
@@ -89,6 +103,7 @@ private:
     QAction * act_mpr_export{nullptr};
 
     // 3D Actions
+    QAction * act_3d_cine{nullptr};
     QAction * act_3d_preset{nullptr};
     QAction * act_3d_trackball{nullptr};
     QAction * act_3d_pan{nullptr};

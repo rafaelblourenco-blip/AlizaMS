@@ -5,6 +5,10 @@
 #endif
 #include "radiantconfigdialog.h"
 #include "graphicsview.h"
+#include "common/mprgeometry.h"
+#include "common/mprmeasurementgeometry.h"
+#include "mprstate.h"
+#include "common/mprslabitk.h"
 #include "graphicswidget.h"
 #include "aliza.h"
 #include "radiantinputdispatcher.h"
@@ -16,6 +20,7 @@
 #include <QTimer>
 #include <QGraphicsSceneMouseEvent>
 #include <QApplication>
+#include <QClipboard>
 #include <QList>
 #include <QGraphicsDropShadowEffect>
 #include "contourutils.h"
@@ -24,14 +29,17 @@
 GraphicsView::GraphicsView(GraphicsWidget * p) : parent(p)
 {
 	setAcceptDrops(false);
+	setMouseTracking(true);
 	setFrameStyle(QFrame::Plain);
 	setFrameShape(QFrame::NoFrame);
+	setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+	setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 	QGraphicsScene * scene_ = new QGraphicsScene(this);
 	scene_->setItemIndexMethod(QGraphicsScene::NoIndex);
 	const QRectF rectf(0, 0, 100, 100);
 	scene_->setSceneRect(rectf);
 	setScene(scene_);
-	QColor bc = qApp->palette().color(QPalette::Window);
+	QColor bc(Qt::black);
 	setBackgroundBrush(QBrush(bc));
 	shutter_color = std::move(bc);
 	//setCacheMode(CacheNone);
@@ -84,6 +92,7 @@ GraphicsView::GraphicsView(GraphicsWidget * p) : parent(p)
 	line_x = new QGraphicsPathItem();
 	line_x->setPen(xpen);
 	line_x->setZValue(1e+19 - 4);
+	line_x->hide();
 	scene_->addItem(line_x);
 	//
 	QPen ypen;
@@ -93,6 +102,7 @@ GraphicsView::GraphicsView(GraphicsWidget * p) : parent(p)
 	line_y = new QGraphicsPathItem();
 	line_y->setPen(ypen);
 	line_y->setZValue(1e+19 - 3);
+	line_y->hide();
 	scene_->addItem(line_y);
 	//
 	QPen zpen;
@@ -102,6 +112,7 @@ GraphicsView::GraphicsView(GraphicsWidget * p) : parent(p)
 	line_z = new QGraphicsPathItem();
 	line_z->setPen(zpen);
 	line_z->setZValue(1e+19 - 2);
+	line_z->hide();
 	scene_->addItem(line_z);
 	//
 	measurment_line = new QGraphicsPathItem();
@@ -166,6 +177,17 @@ void GraphicsView::keyPressEvent(QKeyEvent * e)
 	{
 		switch (e->key())
 		{
+		case Qt::Key_C:
+			{
+				QPixmap pix = viewport()->grab();
+				if (!pix.isNull())
+				{
+					QApplication::clipboard()->setPixmap(pix);
+					QApplication::clipboard()->setImage(pix.toImage());
+				}
+				e->accept();
+				return;
+			}
 		case Qt::Key_0:
 			// Fit to panel (Ctrl+0)
 			parent->update_image(1, false);
@@ -335,8 +357,63 @@ bool GraphicsView::is_anonymous_mode()
 void GraphicsView::drawForeground(QPainter * painter, const QRectF & rect)
 {
 	Q_UNUSED(rect);
+	if (!parent || !parent->image_container.image3D) {
+		if (!extra_points.isEmpty() || !saved_measure_paths.isEmpty()) clear_extra_measurements();
+		return;
+	}
+	if ((!extra_points.isEmpty() || !saved_measure_paths.isEmpty()) && parent->image_container.image3D->di)
+	{
+		const auto *di = parent->image_container.image3D->di;
+		const auto state=parent->mpr_state();
+		const int axis=parent->get_axis();
+		bool changed=extra_volume != parent->image_container.image3D || !state || !state->enabled || !state->initialized || axis<0 || axis>=3;
+		if (!changed) {
+			const auto &p=state->planes.planes[axis];
+			const double now[]={p.center.x,p.center.y,p.center.z,p.u.x,p.u.y,p.u.z,p.v.x,p.v.y,p.v.z};
+			for (int i=0;i<9;++i) if (std::abs(extra_plane[i]-now[i])>1e-9) changed=true;
+		}
+		if (changed || extra_slice[0] != di->selected_x_slice || extra_slice[1] != di->selected_y_slice ||
+			extra_slice[2] != di->selected_z_slice || extra_ref_h != m_ref_angle_h ||
+			extra_ref_v != m_ref_angle_v || extra_slab_mode != parent->slab_mode() ||
+			extra_slab_thickness != parent->slab_thickness()) clear_extra_measurements();
+	}
+	if (parent->slab_mode() != 0 || parent->is_oblique() || !parent->slab_error().isEmpty())
+	{
+		painter->save();
+		painter->resetTransform();
+		// A previous or thin slice must never be presented as the requested projection.
+		if (parent->slab_pending() || !parent->slab_error().isEmpty())
+			painter->fillRect(viewport()->rect(), Qt::black);
+		const QString mode = parent->slab_mode() == 1 ? QString("MIP") :
+			(parent->slab_mode() == 2 ? QString("MinIP") :
+			(parent->slab_mode() == 3 ? QString("Average") : QString("Obliquo")));
+		const QString label = !parent->slab_error().isEmpty() ? parent->slab_error() :
+			(parent->slab_mode() == 0 ? mode : QString("%1 %2 mm%3").arg(mode)
+				.arg(parent->slab_thickness(), 0, 'f', 1)
+				.arg(parent->slab_pending() ? QString(" - calculando") : QString()));
+        const QString backendLabel = label + QString(" [%1]").arg(parent->mpr_backend());
+		const QRect r = viewport()->rect();
+		const QRect labelRect(r.left(), r.top() + 4, r.width(), 22);
+		painter->setPen(Qt::black);
+		painter->drawText(labelRect.translated(1, 1), Qt::AlignHCenter | Qt::AlignVCenter, backendLabel);
+		painter->setPen(Qt::white);
+		painter->drawText(labelRect, Qt::AlignHCenter | Qt::AlignVCenter, backendLabel);
+		painter->restore();
+		if (parent->slab_pending() || !parent->slab_error().isEmpty()) return;
+	}
+	const auto & shared = parent->mpr_state();
+	if (shared && shared->enabled && shared->initialized && parent->get_mouse_modus() == 1 &&
+		(line_x->isVisible() || line_y->isVisible() || line_z->isVisible()))
+	{
+		painter->save();
+		painter->resetTransform();
+		painter->setPen(QPen(Qt::white, 1.5));
+		painter->setBrush(QColor(7, 23, 40, 220));
+		const QPointF handles[4] = {m_handle_h1_scene,m_handle_h2_scene,m_handle_v1_scene,m_handle_v2_scene};
+		for (const QPointF &handle : handles) painter->drawEllipse(QPointF(mapFromScene(handle)), 4.0, 4.0);
+		painter->restore();
+	}
 	if (!s_show_hud) return;
-	if (!parent || !parent->image_container.image3D) return;
 
 	const ImageVariant * iv = parent->image_container.image3D;
 	if (!iv || !iv->di) return;
@@ -440,7 +517,7 @@ void GraphicsView::drawForeground(QPainter * painter, const QRectF & rect)
 		bl_y -= lineHeight;
 	}
 
-	if (cfg.show_thickness_loc)
+	if (cfg.show_thickness_loc && parent->slab_mode() == 0 && !parent->is_oblique())
 	{
 		if (iv->di->iz_spacing > 0.0)
 		{
@@ -557,34 +634,6 @@ void GraphicsView::drawForeground(QPainter * painter, const QRectF & rect)
 		painter->drawText(badge_rect, Qt::AlignCenter, measure_text);
 	}
 
-	// 4. MPR Reference Line Rotation Handles
-	if (parent && parent->image_container.image3D)
-	{
-		auto drawRotationHandle = [&](const QPointF & scenePos, bool isHovered) {
-			if (scenePos.isNull()) return;
-			const QPointF pt = mapFromScene(scenePos);
-			if (!vr.contains(pt.toPoint())) return;
-
-			painter->setRenderHint(QPainter::Antialiasing, true);
-			if (isHovered)
-			{
-				painter->setPen(QPen(QColor(56, 189, 248), 2.0)); // #38BDF8
-				painter->setBrush(QBrush(QColor(14, 165, 233, 220)));
-				painter->drawEllipse(pt, 5.5, 5.5);
-			}
-			else
-			{
-				painter->setPen(QPen(QColor(255, 255, 255, 220), 1.5));
-				painter->setBrush(QBrush(QColor(7, 23, 40, 200)));
-				painter->drawEllipse(pt, 4.0, 4.0);
-			}
-		};
-
-		if (!m_handle_h1_scene.isNull()) drawRotationHandle(m_handle_h1_scene, m_hover_ref_line == 1 && m_hover_ref_end == 1);
-		if (!m_handle_h2_scene.isNull()) drawRotationHandle(m_handle_h2_scene, m_hover_ref_line == 1 && m_hover_ref_end == 2);
-		if (!m_handle_v1_scene.isNull()) drawRotationHandle(m_handle_v1_scene, m_hover_ref_line == 2 && m_hover_ref_end == 1);
-		if (!m_handle_v2_scene.isNull()) drawRotationHandle(m_handle_v2_scene, m_hover_ref_line == 2 && m_hover_ref_end == 2);
-	}
 
 	painter->restore();
 }
@@ -776,6 +825,64 @@ void GraphicsView::clear_shutters()
 
 void GraphicsView::mousePressEvent(QMouseEvent * e)
 {
+	const auto tool = RadiantInputDispatcher::instance()->get_tool();
+	if (e->button() == Qt::LeftButton && parent->mpr_state() && parent->mpr_state()->enabled &&
+		(tool == RadiantTool::Length || tool == RadiantTool::Angle || tool == RadiantTool::Ellipse ||
+		 tool == RadiantTool::ClosedPolygon || tool == RadiantTool::Arrow))
+	{
+		if (parent->slab_pending() || !parent->slab_error().isEmpty()) return;
+		const QPointF p = mapToScene(e->pos());
+		if (!extra_measurement_point_valid(p)) return;
+		const int t = static_cast<int>(tool);
+		if (extra_complete || extra_tool != t)
+		{
+			if (extra_complete && extra_measure_path) {
+				saved_measure_paths.push_back(extra_measure_path); saved_measure_labels.push_back(extra_measure_label);
+				extra_measure_path=nullptr; extra_measure_label=nullptr;
+			} else if (extra_measure_path) {
+				delete extra_measure_path; delete extra_measure_label;
+				extra_measure_path=nullptr; extra_measure_label=nullptr;
+			}
+			extra_points.clear(); extra_drag=false; extra_complete=false; extra_tool = t;
+			const auto state=parent->mpr_state(); const int axis=parent->get_axis();
+			if (!state || !state->initialized || axis<0 || axis>=3) { extra_tool=-1; return; }
+			const auto &plane=state->planes.planes[axis];
+			const double snapshot[]={plane.center.x,plane.center.y,plane.center.z,plane.u.x,plane.u.y,plane.u.z,plane.v.x,plane.v.y,plane.v.z};
+			for (int i=0;i<9;++i) extra_plane[i]=snapshot[i];
+			extra_volume=parent->image_container.image3D;
+			const auto *di = parent->image_container.image3D->di;
+			extra_slice[0]=di->selected_x_slice; extra_slice[1]=di->selected_y_slice; extra_slice[2]=di->selected_z_slice;
+			extra_ref_h=m_ref_angle_h; extra_ref_v=m_ref_angle_v;
+			extra_slab_mode=parent->slab_mode(); extra_slab_thickness=parent->slab_thickness();
+		}
+		if (tool == RadiantTool::Length || tool == RadiantTool::Ellipse || tool == RadiantTool::Arrow)
+		{ extra_points.clear(); extra_points.push_back(p); extra_drag = true; }
+		else { extra_points.push_back(p); if (tool == RadiantTool::Angle && extra_points.size() == 3) extra_complete = true; }
+		update_extra_measurement(p, extra_complete);
+		return;
+	}
+	if (e->button() == Qt::LeftButton && (parent->slab_pending() || !parent->slab_error().isEmpty())) return;
+	if (parent->get_mouse_modus() == 1 && e->button() == Qt::LeftButton && e->modifiers() == Qt::NoModifier && check_ref_line_rotation_handle_hover(e->pos()) > 0)
+	{
+		int handle = check_ref_line_rotation_handle_hover(e->pos());
+		m_hover_ref_line = (handle <= 2) ? 1 : 2;
+		m_hover_ref_end = (handle % 2 == 1) ? 1 : 2;
+		m_is_rotating_ref_line = true;
+		m_initial_mouse_angle = reference_line_angle(e->pos());
+		m_applied_drag_angle = 0.0;
+		m_start_rotation_angle = (m_hover_ref_line == 1) ? m_ref_angle_h : m_ref_angle_v;
+		setCursor(Qt::PointingHandCursor);
+		return;
+	}
+
+
+	if (parent->mpr_state() && parent->mpr_state()->enabled && parent->get_mouse_modus() == 1 &&
+		e->button() == Qt::LeftButton && e->modifiers() == Qt::NoModifier)
+	{
+		lines_at(e->pos().x(),e->pos().y());
+		return;
+	}
+
 	if (RadiantInputDispatcher::instance()->handle_mouse_press(this, e, parent))
 	{
 		return;
@@ -795,18 +902,6 @@ void GraphicsView::mousePressEvent(QMouseEvent * e)
 		return;
 	}
 
-	if (e->button() == Qt::LeftButton && (m_hover_ref_line > 0 || (check_ref_line_rotation_handle_hover(e->pos()) > 0)))
-	{
-		int handle = (m_hover_ref_line > 0) ? ((m_hover_ref_line == 1) ? 1 : 3) : check_ref_line_rotation_handle_hover(e->pos());
-		m_hover_ref_line = (handle <= 2) ? 1 : 2;
-		m_hover_ref_end = (handle % 2 == 1) ? 1 : 2;
-		m_is_rotating_ref_line = true;
-		QPointF pivotScreen = mapFromScene(m_rotation_pivot_scene);
-		m_initial_mouse_angle = std::atan2(e->pos().y() - pivotScreen.y(), e->pos().x() - pivotScreen.x());
-		m_start_rotation_angle = (m_hover_ref_line == 1) ? m_ref_angle_h : m_ref_angle_v;
-		setCursor(Qt::PointingHandCursor);
-		return;
-	}
 
 	if (e->button() == Qt::LeftButton && parent->get_mouse_modus() == 1)
 	{
@@ -820,12 +915,25 @@ void GraphicsView::mousePressEvent(QMouseEvent * e)
 
 void GraphicsView::mouseDoubleClickEvent(QMouseEvent * e)
 {
+	if (e->button() == Qt::LeftButton && extra_tool == static_cast<int>(RadiantTool::ClosedPolygon) && !extra_complete)
+	{
+		if (extra_points.size() >= 3) { extra_complete = true; update_extra_measurement(mapToScene(e->pos()), true); }
+		return;
+	}
 	QGraphicsView::mouseDoubleClickEvent(e);
 }
 
 void GraphicsView::mouseReleaseEvent(QMouseEvent * e)
 {
-	if (RadiantInputDispatcher::instance()->handle_mouse_release(this, e, parent))
+	if (extra_drag && e->button() == Qt::LeftButton)
+	{
+		extra_drag = false;
+		const QPointF p = mapToScene(e->pos());
+		if (extra_measurement_point_valid(p)) { extra_complete = true; update_extra_measurement(p, true); }
+		else { extra_points.clear(); extra_tool=-1; if (extra_measure_path) extra_measure_path->setPath(QPainterPath()); if (extra_measure_label) extra_measure_label->setText(QString()); }
+		return;
+	}
+	if (!m_is_rotating_ref_line && RadiantInputDispatcher::instance()->handle_mouse_release(this, e, parent))
 	{
 		return;
 	}
@@ -889,6 +997,7 @@ void GraphicsView::mouseReleaseEvent(QMouseEvent * e)
 				parent->image_container.image3D,
 				angleToApply,
 				targetPlane,
+				parent->get_axis(),
 				false /* diagnostic Linear interpolation */);
 		}
 		m_hover_ref_line = 0;
@@ -909,6 +1018,14 @@ void GraphicsView::mouseReleaseEvent(QMouseEvent * e)
 
 void GraphicsView::mouseMoveEvent(QMouseEvent * e)
 {
+	if (!extra_complete && !extra_points.isEmpty() &&
+		static_cast<int>(RadiantInputDispatcher::instance()->get_tool()) == extra_tool)
+	{
+		const QPointF p = mapToScene(e->pos());
+		if (extra_measurement_point_valid(p)) update_extra_measurement(p, false);
+		return;
+	}
+	if ((e->buttons() & Qt::LeftButton) && (parent->slab_pending() || !parent->slab_error().isEmpty())) return;
 	if (parent->get_show_cursor())
 	{
 		const QPoint p0 = e->pos();
@@ -916,7 +1033,14 @@ void GraphicsView::mouseMoveEvent(QMouseEvent * e)
 		get_pixel_value(p1.x(), p1.y());
 	}
 
-	if (RadiantInputDispatcher::instance()->handle_mouse_move(this, e, parent))
+	if (!m_is_rotating_ref_line && parent->mpr_state() && parent->mpr_state()->enabled &&
+		parent->get_mouse_modus() == 1 && (e->buttons() & Qt::LeftButton) && e->modifiers() == Qt::NoModifier)
+	{
+		lines_at(e->pos().x(),e->pos().y());
+		return;
+	}
+
+	if (!m_is_rotating_ref_line && RadiantInputDispatcher::instance()->handle_mouse_move(this, e, parent))
 	{
 		return;
 	}
@@ -968,8 +1092,7 @@ void GraphicsView::mouseMoveEvent(QMouseEvent * e)
 
 	if ((e->buttons() & Qt::LeftButton) && m_is_rotating_ref_line)
 	{
-		QPointF pivotScreen = mapFromScene(m_rotation_pivot_scene);
-		double curAngle = std::atan2(e->pos().y() - pivotScreen.y(), e->pos().x() - pivotScreen.x());
+		double curAngle = reference_line_angle(e->pos());
 		double deltaAngle = curAngle - m_initial_mouse_angle;
 		double newAngle = m_start_rotation_angle + deltaAngle;
 		while (newAngle > M_PI) newAngle -= 2.0 * M_PI;
@@ -1002,12 +1125,27 @@ void GraphicsView::mouseMoveEvent(QMouseEvent * e)
 			targetPlane = (m_hover_ref_line == 1) ? 2 : 1;
 		}
 
+		const auto & shared = parent->mpr_state();
+		if (shared && shared->enabled && shared->initialized && targetWidget)
+		{
+			const double delta = deltaAngle - m_applied_drag_angle;
+			if (!(shared->lock_orthogonal ? shared->planes.rotate_locked(parent->get_axis(), targetPlane, delta) :
+                  shared->planes.rotate_target(parent->get_axis(), targetPlane, delta))) return;
+			m_applied_drag_angle = deltaAngle;
+			if (shared->lock_orthogonal) { sync_mpr_sliders(); refresh_mpr_views(); return; }
+			sync_mpr_sliders();
+			parent->update_frames();
+			if (widget_m) widget_m->update_frames();
+			if (widget_y) widget_y->update_frames();
+			if (widget_x) widget_x->update_frames();
+		}
 		if (targetWidget && parent->image_container.image3D)
 		{
 			targetWidget->set_oblique_slice_2D(
 				parent->image_container.image3D,
 				angleToApply,
 				targetPlane,
+				parent->get_axis(),
 				true /* fastDraftMode */);
 		}
 		return;
@@ -1067,7 +1205,7 @@ void GraphicsView::set_win_last_position(int x, int y)
 
 void GraphicsView::update_background_color()
 {
-	QColor bc = qApp->palette().color(QPalette::Window);
+	QColor bc(Qt::black);
 	setBackgroundBrush(QBrush(bc));
 	shutter_color = std::move(bc);
 }
@@ -1077,8 +1215,41 @@ void GraphicsView::draw_frames(short a)
 	if (!parent->image_container.image3D) return;
 	const double W = parent->image_container.image2D ? static_cast<double>(parent->image_container.image2D->idimx) : 512.0;
 	const double H = parent->image_container.image2D ? static_cast<double>(parent->image_container.image2D->idimy) : 512.0;
-	const double L = std::max(W, H) * 2.0;
-	const double D_handle = std::max(30.0, std::min(W, H) * 0.45);
+	const auto * di = parent->image_container.image3D->di;
+	if (!di) return;
+	const double su = std::abs(a == 0 ? di->iy_spacing : di->ix_spacing);
+	const double sv = std::abs(a == 2 ? di->iy_spacing : di->iz_spacing);
+	if (su <= 0.0 || sv <= 0.0) return;
+	const double L = std::max(W * su, H * sv) * 2.0;
+	const double D_handle = std::min(W * su, H * sv) * 0.45;
+	const auto & shared = parent->mpr_state();
+	if (shared && shared->enabled && shared->initialized && a >= 0 && a < 3 &&
+		shared->volume == parent->image_container.image3D)
+	{
+		const double cx = shared->voxel[a == 0 ? 1 : 0] + 0.5;
+		const double cy = shared->voxel[a == 2 ? 1 : 2] + 0.5;
+		m_rotation_pivot_scene = QPointF(cx, cy);
+		QGraphicsPathItem * items[3] = {line_x, line_y, line_z};
+		for (int i = 0; i < 3; ++i)
+		{
+			QPainterPath path;
+			mpr_geometry::Line2D line;
+			if (i != a && mpr_geometry::reference_line(shared->planes.planes[a], shared->planes.planes[i], line))
+			{
+				path.moveTo(cx + (line.u - L * line.du) / su, cy + (line.v - L * line.dv) / sv);
+				path.lineTo(cx + (line.u + L * line.du) / su, cy + (line.v + L * line.dv) / sv);
+				const QPointF h1(cx + (line.u - D_handle * line.du) / su,
+				                 cy + (line.v - D_handle * line.dv) / sv);
+				const QPointF h2(cx + (line.u + D_handle * line.du) / su,
+				                 cy + (line.v + D_handle * line.dv) / sv);
+				const int horizontalTarget = a == 2 ? 1 : 2;
+				if (i == horizontalTarget) { m_handle_h1_scene=h1; m_handle_h2_scene=h2; }
+				else { m_handle_v1_scene=h1; m_handle_v2_scene=h2; }
+			}
+			items[i]->setPath(path);
+		}
+		return;
+	}
 
 	switch (a)
 	{
@@ -1091,23 +1262,19 @@ void GraphicsView::draw_frames(short a)
 			const double cosV = std::cos(m_ref_angle_v);
 			const double sinV = std::sin(m_ref_angle_v);
 			QPainterPath path_y_line;
-			path_y_line.moveTo(Cx + L * sinV, Cy - L * cosV);
-			path_y_line.lineTo(Cx - L * sinV, Cy + L * cosV);
-			m_handle_v1_scene = QPointF(Cx + D_handle * sinV, Cy - D_handle * cosV);
-			m_handle_v2_scene = QPointF(Cx - D_handle * sinV, Cy + D_handle * cosV);
-			path_y_line.addEllipse(m_handle_v1_scene, 4.0, 4.0);
-			path_y_line.addEllipse(m_handle_v2_scene, 4.0, 4.0);
+			path_y_line.moveTo(Cx + L * sinV / su, Cy - L * cosV / sv);
+			path_y_line.lineTo(Cx - L * sinV / su, Cy + L * cosV / sv);
+			m_handle_v1_scene = QPointF(Cx + D_handle * sinV / su, Cy - D_handle * cosV / sv);
+			m_handle_v2_scene = QPointF(Cx - D_handle * sinV / su, Cy + D_handle * cosV / sv);
 			line_y->setPath(path_y_line);
 
 			const double cosH = std::cos(m_ref_angle_h);
 			const double sinH = std::sin(m_ref_angle_h);
 			QPainterPath path_z_line;
-			path_z_line.moveTo(Cx - L * cosH, Cy - L * sinH);
-			path_z_line.lineTo(Cx + L * cosH, Cy + L * sinH);
-			m_handle_h1_scene = QPointF(Cx - D_handle * cosH, Cy - D_handle * sinH);
-			m_handle_h2_scene = QPointF(Cx + D_handle * cosH, Cy + D_handle * sinH);
-			path_z_line.addEllipse(m_handle_h1_scene, 4.0, 4.0);
-			path_z_line.addEllipse(m_handle_h2_scene, 4.0, 4.0);
+			path_z_line.moveTo(Cx - L * cosH / su, Cy - L * sinH / sv);
+			path_z_line.lineTo(Cx + L * cosH / su, Cy + L * sinH / sv);
+			m_handle_h1_scene = QPointF(Cx - D_handle * cosH / su, Cy - D_handle * sinH / sv);
+			m_handle_h2_scene = QPointF(Cx + D_handle * cosH / su, Cy + D_handle * sinH / sv);
 			line_z->setPath(path_z_line);
 
 			QPainterPath empty_path;
@@ -1123,23 +1290,19 @@ void GraphicsView::draw_frames(short a)
 			const double cosV = std::cos(m_ref_angle_v);
 			const double sinV = std::sin(m_ref_angle_v);
 			QPainterPath path_x_line;
-			path_x_line.moveTo(Cx + L * sinV, Cy - L * cosV);
-			path_x_line.lineTo(Cx - L * sinV, Cy + L * cosV);
-			m_handle_v1_scene = QPointF(Cx + D_handle * sinV, Cy - D_handle * cosV);
-			m_handle_v2_scene = QPointF(Cx - D_handle * sinV, Cy + D_handle * cosV);
-			path_x_line.addEllipse(m_handle_v1_scene, 4.0, 4.0);
-			path_x_line.addEllipse(m_handle_v2_scene, 4.0, 4.0);
+			path_x_line.moveTo(Cx + L * sinV / su, Cy - L * cosV / sv);
+			path_x_line.lineTo(Cx - L * sinV / su, Cy + L * cosV / sv);
+			m_handle_v1_scene = QPointF(Cx + D_handle * sinV / su, Cy - D_handle * cosV / sv);
+			m_handle_v2_scene = QPointF(Cx - D_handle * sinV / su, Cy + D_handle * cosV / sv);
 			line_x->setPath(path_x_line);
 
 			const double cosH = std::cos(m_ref_angle_h);
 			const double sinH = std::sin(m_ref_angle_h);
 			QPainterPath path_z_line;
-			path_z_line.moveTo(Cx - L * cosH, Cy - L * sinH);
-			path_z_line.lineTo(Cx + L * cosH, Cy + L * sinH);
-			m_handle_h1_scene = QPointF(Cx - D_handle * cosH, Cy - D_handle * sinH);
-			m_handle_h2_scene = QPointF(Cx + D_handle * cosH, Cy + D_handle * sinH);
-			path_z_line.addEllipse(m_handle_h1_scene, 4.0, 4.0);
-			path_z_line.addEllipse(m_handle_h2_scene, 4.0, 4.0);
+			path_z_line.moveTo(Cx - L * cosH / su, Cy - L * sinH / sv);
+			path_z_line.lineTo(Cx + L * cosH / su, Cy + L * sinH / sv);
+			m_handle_h1_scene = QPointF(Cx - D_handle * cosH / su, Cy - D_handle * sinH / sv);
+			m_handle_h2_scene = QPointF(Cx + D_handle * cosH / su, Cy + D_handle * sinH / sv);
 			line_z->setPath(path_z_line);
 
 			QPainterPath empty_path;
@@ -1155,23 +1318,19 @@ void GraphicsView::draw_frames(short a)
 			const double cosV = std::cos(m_ref_angle_v);
 			const double sinV = std::sin(m_ref_angle_v);
 			QPainterPath path_x_line;
-			path_x_line.moveTo(Cx + L * sinV, Cy - L * cosV);
-			path_x_line.lineTo(Cx - L * sinV, Cy + L * cosV);
-			m_handle_v1_scene = QPointF(Cx + D_handle * sinV, Cy - D_handle * cosV);
-			m_handle_v2_scene = QPointF(Cx - D_handle * sinV, Cy + D_handle * cosV);
-			path_x_line.addEllipse(m_handle_v1_scene, 4.0, 4.0);
-			path_x_line.addEllipse(m_handle_v2_scene, 4.0, 4.0);
+			path_x_line.moveTo(Cx + L * sinV / su, Cy - L * cosV / sv);
+			path_x_line.lineTo(Cx - L * sinV / su, Cy + L * cosV / sv);
+			m_handle_v1_scene = QPointF(Cx + D_handle * sinV / su, Cy - D_handle * cosV / sv);
+			m_handle_v2_scene = QPointF(Cx - D_handle * sinV / su, Cy + D_handle * cosV / sv);
 			line_x->setPath(path_x_line);
 
 			const double cosH = std::cos(m_ref_angle_h);
 			const double sinH = std::sin(m_ref_angle_h);
 			QPainterPath path_y_line;
-			path_y_line.moveTo(Cx - L * cosH, Cy - L * sinH);
-			path_y_line.lineTo(Cx + L * cosH, Cy + L * sinH);
-			m_handle_h1_scene = QPointF(Cx - D_handle * cosH, Cy - D_handle * sinH);
-			m_handle_h2_scene = QPointF(Cx + D_handle * cosH, Cy + D_handle * sinH);
-			path_y_line.addEllipse(m_handle_h1_scene, 4.0, 4.0);
-			path_y_line.addEllipse(m_handle_h2_scene, 4.0, 4.0);
+			path_y_line.moveTo(Cx - L * cosH / su, Cy - L * sinH / sv);
+			path_y_line.lineTo(Cx + L * cosH / su, Cy + L * sinH / sv);
+			m_handle_h1_scene = QPointF(Cx - D_handle * cosH / su, Cy - D_handle * sinH / sv);
+			m_handle_h2_scene = QPointF(Cx + D_handle * cosH / su, Cy + D_handle * sinH / sv);
 			line_y->setPath(path_y_line);
 
 			QPainterPath empty_path;
@@ -1183,24 +1342,88 @@ void GraphicsView::draw_frames(short a)
 	}
 }
 
+double GraphicsView::reference_line_angle(const QPoint & screen) const
+{
+	if (!parent || !parent->image_container.image3D || !parent->image_container.image3D->di) return 0.0;
+	const auto * di = parent->image_container.image3D->di;
+	const int a = parent->get_axis();
+	const double su = std::abs(a == 0 ? di->iy_spacing : di->ix_spacing);
+	const double sv = std::abs(a == 2 ? di->iy_spacing : di->iz_spacing);
+	const QPointF p = mapToScene(screen) - m_rotation_pivot_scene;
+	return mpr_geometry::scene_angle(p.x(), p.y(), su, sv);
+}
+
 int GraphicsView::check_ref_line_rotation_handle_hover(const QPoint & pos)
 {
-	if (!parent || !parent->image_container.image3D) return 0;
-	const double radius = 10.0;
-
-	QPointF s_h1 = mapFromScene(m_handle_h1_scene);
-	if (std::hypot(pos.x() - s_h1.x(), pos.y() - s_h1.y()) <= radius) return 1;
-
-	QPointF s_h2 = mapFromScene(m_handle_h2_scene);
-	if (std::hypot(pos.x() - s_h2.x(), pos.y() - s_h2.y()) <= radius) return 2;
-
-	QPointF s_v1 = mapFromScene(m_handle_v1_scene);
-	if (std::hypot(pos.x() - s_v1.x(), pos.y() - s_v1.y()) <= radius) return 3;
-
-	QPointF s_v2 = mapFromScene(m_handle_v2_scene);
-	if (std::hypot(pos.x() - s_v2.x(), pos.y() - s_v2.y()) <= radius) return 4;
-
+	const auto & shared = parent->mpr_state();
+	if (!shared || !shared->enabled || !shared->initialized || parent->slab_pending() ||
+		!parent->slab_error().isEmpty() ||
+		(!line_x->isVisible() && !line_y->isVisible() && !line_z->isVisible())) return 0;
+	const QPointF handles[4] = {m_handle_h1_scene,m_handle_h2_scene,m_handle_v1_scene,m_handle_v2_scene};
+	for (int i=0; i<4; ++i)
+	{
+		const QPointF p = mapFromScene(handles[i]);
+		if (std::hypot(pos.x()-p.x(),pos.y()-p.y()) <= 10.0) return i+1;
+	}
 	return 0;
+}
+
+void GraphicsView::refresh_mpr_views()
+{
+	const auto shared=parent->mpr_state();
+	GraphicsWidget *views[4]={parent,widget_m,widget_y,widget_x};
+	for (int i=0; i<4; ++i)
+	{
+		if (!shared || !shared->enabled) break;
+		if (!views[i] || !views[i]->image_container.image3D) continue;
+		bool duplicate=false;
+		for (int j=0; j<i; ++j) if (views[j]==views[i]) duplicate=true;
+		if (!duplicate) views[i]->set_slice_2D(views[i]->image_container.image3D,0,false);
+	}
+}
+
+void GraphicsView::sync_mpr_sliders()
+{
+	const auto shared=parent->mpr_state();
+	ImageVariant *v=parent->image_container.image3D;
+	if (!shared || !shared->enabled || !v) return;
+	GraphicsWidget *views[4]={parent,widget_m,widget_y,widget_x};
+	for (int i=0; i<4; ++i)
+	{
+		GraphicsWidget *view=views[i];
+		if (!view || !view->slider_m || !view->slider_m->slices_slider || view->get_axis()<0 || view->get_axis()>2) continue;
+		const int a=view->get_axis();
+		int minimum=0,maximum=0;
+		bool valid=false;
+		auto bounds=[&](const auto &input) {
+			if (input.IsNotNull()) valid=mpr_slab::navigation_bounds_itk(shared->planes,a,
+				shared->axisNormalSign[a],shared->sliderStep[a],input.GetPointer(),minimum,maximum);
+		};
+		switch (v->image_type) {
+		case 0: bounds(v->pSS); break; case 1: bounds(v->pUS); break; case 2: bounds(v->pSI); break;
+		case 3: bounds(v->pUI); break; case 4: bounds(v->pUC); break; case 5: bounds(v->pF); break;
+		case 6: bounds(v->pD); break; case 7: bounds(v->pSLL); break; case 8: bounds(v->pULL); break; default: break;
+		}
+		if (!valid) continue;
+		const bool blocked=view->slider_m->slices_slider->blockSignals(true);
+		view->slider_m->slices_slider->setRange(minimum,maximum);
+		view->slider_m->set_slice(shared->sliderStep[a]);
+		view->slider_m->slices_slider->blockSignals(blocked);
+	}
+}
+
+void GraphicsView::recover_mpr_views()
+{
+	const auto & shared=parent->mpr_state();
+	if (shared) { shared->enabled=false; shared->reset_orientation(); }
+	GraphicsWidget *views[4]={parent,widget_m,widget_y,widget_x};
+	for (int i=0; i<4; ++i)
+	{
+		if (!views[i]) continue;
+		bool duplicate=false;
+		for (int j=0; j<i; ++j) if (views[j]==views[i]) duplicate=true;
+		if (!duplicate) views[i]->recover_mpr_failure();
+	}
 }
 
 void GraphicsView::reset_reference_line_angles()
@@ -1303,6 +1526,7 @@ void GraphicsView::set_empty_lines()
 
 void GraphicsView::set_empty_distance()
 {
+
 	m0_set = false;
 	m1_set = false;
 	QPainterPath path___;
@@ -1348,6 +1572,7 @@ void GraphicsView::lines_at(double x, double y)
 {
 	const QPoint p0(x, y);
 	const QPointF p1 = mapToScene(p0);
+	if (parent->handle_mpr_point(p1.x(),p1.y())) return;
 	if (parent->image_container.image3D &&
 		parent->image_container.image3D->equi)
 	{
@@ -1469,6 +1694,119 @@ void GraphicsView::lines_at(double x, double y)
 		}
 		draw_frames(parent->get_axis());
 	}
+}
+
+bool GraphicsView::extra_measurement_point_valid(const QPointF & p) const
+{
+	if (!parent || !parent->image_container.image3D || !parent->image_container.image3D->di ||
+		!std::isfinite(p.x()) || !std::isfinite(p.y()) || p.x() < 0 || p.y() < 0) return false;
+	const auto *di = parent->image_container.image3D->di;
+	const int axis = parent->get_axis();
+	int width = axis == 0 ? di->idimy : di->idimx;
+	int height = axis == 2 ? di->idimy : di->idimz;
+	if ((parent->is_oblique() || parent->slab_mode() != 0) && parent->image_container.image2D &&
+		parent->image_container.image2D->pD.IsNotNull())
+	{
+		const auto size=parent->image_container.image2D->pD->GetLargestPossibleRegion().GetSize();
+		width=static_cast<int>(size[0]); height=static_cast<int>(size[1]);
+	}
+	if (p.x() >= width || p.y() >= height) return false;
+	if (parent->is_oblique() || parent->slab_mode() != 0)
+	{
+		const auto &mask = parent->slab_mask();
+		if (mask.IsNull()) return false;
+		Image2DTypeUC::IndexType idx; idx[0] = static_cast<long>(p.x()); idx[1] = static_cast<long>(p.y());
+		if (!mask->GetLargestPossibleRegion().IsInside(idx) || !mask->GetPixel(idx)) return false;
+	}
+	return true;
+}
+
+void GraphicsView::update_extra_measurement(const QPointF & cursor, bool complete)
+{
+	if (extra_points.isEmpty()) return;
+	const auto *di = parent->image_container.image3D->di;
+	const int axis = parent->get_axis();
+	double su = std::abs(axis == 0 ? di->iy_spacing : di->ix_spacing);
+	double sv = std::abs(axis == 2 ? di->iy_spacing : di->iz_spacing);
+	if ((parent->is_oblique() || parent->slab_mode() != 0) && parent->image_container.image2D &&
+		parent->image_container.image2D->pD.IsNotNull())
+	{
+		const auto spacing = parent->image_container.image2D->pD->GetSpacing();
+		su = std::abs(spacing[0]); sv = std::abs(spacing[1]);
+	}
+	if (!std::isfinite(su) || !std::isfinite(sv) || su <= 0 || sv <= 0) return;
+	if (!extra_measure_path)
+	{
+		extra_measure_path = scene()->addPath(QPainterPath(), QPen(Qt::cyan, 0));
+		extra_measure_path->setZValue(1e10);
+		extra_measure_label = scene()->addSimpleText(QString());
+		extra_measure_label->setBrush(QBrush(Qt::cyan));
+		extra_measure_label->setFlag(QGraphicsItem::ItemIgnoresTransformations);
+		extra_measure_label->setZValue(1e10);
+	}
+	QVector<QPointF> points = extra_points;
+	if (!complete && (points.isEmpty() || points.last() != cursor)) points.push_back(cursor);
+	else if (complete && extra_drag == false && points.size() == 1) points.push_back(cursor);
+	QPainterPath path;
+	QString text;
+	const auto tool = static_cast<RadiantTool>(extra_tool);
+	if ((tool == RadiantTool::Length || tool == RadiantTool::Ellipse || tool == RadiantTool::Arrow) && points.size() >= 2)
+	{
+		const QPointF a=points.first(), b=points.last();
+		if (tool == RadiantTool::Length)
+		{
+			path.moveTo(a); path.lineTo(b);
+			if (complete && mpr_measurement::valid_segments(points,[this](const QPointF &p) { return extra_measurement_point_valid(p); }))
+				text=QString::number(std::hypot((b.x()-a.x())*su,(b.y()-a.y())*sv),'f',3)+QString(" mm");
+		}
+		else if (tool == RadiantTool::Ellipse)
+		{
+			const QRectF rect = QRectF(a,b).normalized(); path.addEllipse(rect);
+			if (complete) {
+                const double area=mpr_measurement::ellipse_area(rect,su,sv);
+                if (area>0) text = QString::number(area, 'f', 2) + QString::fromUtf8(" mm²");
+            }
+		}
+		else
+		{
+			path.moveTo(a); path.lineTo(b);
+			const QPointF d = b-a; const double len = std::hypot(d.x(),d.y());
+			if (len > 0) { const QPointF u=d/len, n(-u.y(),u.x()); const double head=std::min(12.0, len/3.0); path.moveTo(b-u*head+n*head*0.45); path.lineTo(b); path.lineTo(b-u*head-n*head*0.45); }
+		}
+	}
+	else if (tool == RadiantTool::Angle && points.size() >= 2)
+	{
+		path.moveTo(points[0]); for (int i=1;i<points.size();++i) path.lineTo(points[i]);
+		if (complete && points.size() == 3)
+		{
+            const double angle=mpr_measurement::angle_degrees(points[0],points[1],points[2],su,sv);
+            if (angle>=0 && mpr_measurement::valid_segments(points,[this](const QPointF &p) { return extra_measurement_point_valid(p); }))
+                text=QString::number(angle,'f',1)+QString::fromUtf8("°");
+		}
+	}
+	else if (tool == RadiantTool::ClosedPolygon && points.size() >= 2)
+	{
+		if (complete && points.size() >= 3)
+		{
+            path=mpr_measurement::rounded_polygon(points);
+            double area=0;
+            if (mpr_measurement::simple_area(path,su,sv,area))
+                text=QString::number(area,'f',2)+QString::fromUtf8(" mm²");
+		}
+		else { path.moveTo(points[0]); for (int i=1;i<points.size();++i) path.lineTo(points[i]); }
+	}
+	// Do not report an area that includes pixels outside a reconstructed slab.
+	if (complete && !text.isEmpty() && (tool == RadiantTool::Ellipse || tool == RadiantTool::ClosedPolygon) &&
+		(parent->is_oblique() || parent->slab_mode() != 0))
+	{
+		const QRect bounds = path.boundingRect().toAlignedRect();
+		for (int y=bounds.top();y<=bounds.bottom() && !text.isEmpty();++y)
+			for (int x=bounds.left();x<=bounds.right();++x)
+				if (path.contains(QPointF(x+0.5,y+0.5)) && !extra_measurement_point_valid(QPointF(x+0.5,y+0.5))) { text.clear(); break; }
+	}
+	extra_measure_path->setPath(path);
+	extra_measure_label->setText(text);
+	extra_measure_label->setPos(path.boundingRect().bottomRight());
 }
 
 void GraphicsView::measure()
@@ -2433,9 +2771,9 @@ void GraphicsView::draw_shutter(const ImageVariant * ivariant)
 
 void GraphicsView::reset_zoom()
 {
-	if (parent) parent->update_image(1, false);
 	m_scale = 1.0;
 	setTransform(QTransform());
+	if (parent) parent->update_image(1, false);
 	update_selection_rect_width();
 }
 
@@ -2462,8 +2800,19 @@ void GraphicsView::rotate_view(double angle)
 		rotate_ccw();
 }
 
+void GraphicsView::clear_extra_measurements()
+{
+	for (auto *item : saved_measure_paths) delete item;
+	for (auto *item : saved_measure_labels) delete item;
+	saved_measure_paths.clear(); saved_measure_labels.clear();
+	delete extra_measure_path; delete extra_measure_label;
+	extra_measure_path=nullptr; extra_measure_label=nullptr;
+	extra_points.clear(); extra_tool=-1; extra_drag=false; extra_complete=false; extra_volume=nullptr;
+}
+
 void GraphicsView::clear_measurements()
 {
+	clear_extra_measurements();
 	set_empty_distance();
 	clear_collision_paths();
 	if (parent)

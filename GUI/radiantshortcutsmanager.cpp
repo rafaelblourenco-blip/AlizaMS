@@ -1,6 +1,9 @@
+#include "matrixbutton.h"
 #include "radiantshortcutsmanager.h"
 #include "radiantinputdispatcher.h"
 #include "radiantexportdialog.h"
+#include "radianttoolbarscale.h"
+#include "pacsdialog.h"
 #include "radiantconfigdialog.h"
 #include "radiantfiltermanager.h"
 #include "mainwindow.h"
@@ -10,6 +13,7 @@
 #include "studygraphicswidget.h"
 #include "studygraphicsview.h"
 #include "studyviewwidget.h"
+#include "studyframewidget.h"
 #include "sliderwidget.h"
 #include "imagesbox.h"
 #if QT_VERSION >= QT_VERSION_CHECK(5,0,0)
@@ -27,6 +31,8 @@
 #endif
 
 #include <QApplication>
+#include <QClipboard>
+#include <QStatusBar>
 #include <QMenu>
 #include <QToolButton>
 #include <QFileDialog>
@@ -43,6 +49,10 @@ RadiantShortcutsManager::RadiantShortcutsManager(MainWindow * mainWindow, QObjec
 {
     connect(RadiantInputDispatcher::instance(), SIGNAL(tool_changed(RadiantTool)),
             this, SLOT(on_dispatcher_tool_changed(RadiantTool)));
+    if (mw && mw->imagesbox && mw->imagesbox->listWidget)
+        connect(mw->imagesbox->listWidget, &QListWidget::itemSelectionChanged, this, [this]() {
+            if (cine_timer && cine_timer->isActive()) toggle_cine();
+        });
 }
 
 void RadiantShortcutsManager::setup_shortcut(const QKeySequence & seq, const char * slot, bool autoRepeat)
@@ -131,6 +141,12 @@ void RadiantShortcutsManager::initialize_shortcuts()
     // ROIs deletion
     setup_shortcut(QKeySequence(Qt::Key_Delete), SLOT(delete_selected_roi()), false);
     setup_shortcut(QKeySequence(Qt::SHIFT + Qt::Key_Delete), SLOT(delete_all_rois_image()), false);
+
+    // Copy active image to clipboard (Ctrl+C Secondary capture)
+    setup_shortcut(QKeySequence::Copy, SLOT(copy_active_image_to_clipboard()), false);
+
+    // Series Synchronization toggle (F5)
+    setup_shortcut(QKeySequence(Qt::Key_F5), SLOT(cycle_series_sync()), false);
 }
 
 void RadiantShortcutsManager::create_radiant_toolbar(QToolBar * parentToolbar)
@@ -148,6 +164,7 @@ void RadiantShortcutsManager::create_radiant_toolbar(QToolBar * parentToolbar)
     }
 
     radiant_toolbar->setIconSize(QSize(22, 22));
+    new RadiantToolbarScale(mw, radiant_toolbar);
     radiant_toolbar->setMovable(false);
 
     tool_action_group = new QActionGroup(this);
@@ -167,7 +184,15 @@ void RadiantShortcutsManager::create_radiant_toolbar(QToolBar * parentToolbar)
     // 1. Abrir exame da pasta
     action_open_dir = new QAction(QIcon(":/bitmaps/radiant_open_folder.svg"), QString("Abrir pasta DICOM (Ctrl+Shift+O)"), this);
     connect(action_open_dir, SIGNAL(triggered()), this, SLOT(trigger_open_dir()));
-    radiant_toolbar->addAction(action_open_dir);
+    QMenu * studiesMenu = new QMenu(radiant_toolbar);
+    studiesMenu->addAction(mw->imagesbox->actionStudy);
+    studiesMenu->addAction(mw->imagesbox->actionStudyEmpty);
+    studiesMenu->addAction(mw->imagesbox->actionStudyChecked);
+    studiesMenu->addSeparator();
+    studiesMenu->addAction(mw->imagesbox->actionClear);
+    studiesMenu->addAction(mw->imagesbox->actionClearAll);
+    createMenuButton(action_open_dir, studiesMenu, false);
+    mw->imagesbox->toolbar_frame->hide();
 
     // 2. Abrir exame do CD / DVD
     action_open_cd = new QAction(QIcon(":/bitmaps/radiant_open_cd.svg"), QString("Abrir exame de CD/DVD"), this);
@@ -186,9 +211,19 @@ void RadiantShortcutsManager::create_radiant_toolbar(QToolBar * parentToolbar)
 
     radiant_toolbar->addSeparator();
 
-    // 5. Configurar GRID de exibição das imagens
+    // 5. Configurar GRID de exibição das imagens (com seletor interativo retangular)
     action_grid = new QAction(QIcon(":/bitmaps/radiant_grid.svg"), QString("Configurar Grid de exibição"), this);
     QMenu * gridMenu = new QMenu(radiant_toolbar);
+
+    // Interactive Word-like table grid selector
+    DimsChooserAction * chooserAction = new DimsChooserAction(gridMenu);
+    connect(chooserAction->widget(), &DimsChooser::grid_selected, [this, gridMenu](int r, int c) {
+        gridMenu->hide();
+        this->set_grid_layout(r, c);
+    });
+    gridMenu->addAction(chooserAction);
+    gridMenu->addSeparator();
+
     auto addGridAction = [&](int r, int c) {
         QAction * a = gridMenu->addAction(QString("%1 x %2").arg(r).arg(c));
         connect(a, &QAction::triggered, [this, r, c]() { this->set_grid_layout(r, c); });
@@ -203,7 +238,43 @@ void RadiantShortcutsManager::create_radiant_toolbar(QToolBar * parentToolbar)
     addGridAction(2, 4);
     addGridAction(5, 4);
     addGridAction(5, 5);
+    if (mw->studyview) {
+        QMenu * studyMenu = mw->studyview->create_toolbar_menu(gridMenu);
+        studyMenu->setTitle(QString("Ferramentas do estudo"));
+        gridMenu->addMenu(studyMenu);
+    }
     createMenuButton(action_grid, gridMenu, true);
+
+    // 5b. Sincronização de Séries (Auto / Manual / Desligada) - Estilo RadiAnt
+    action_sync_series = new QAction(QIcon(":/bitmaps/radiant_sync_auto.svg"), QString("Sincronização de Séries [Auto] (F5)"), this);
+    connect(action_sync_series, &QAction::triggered, this, &RadiantShortcutsManager::cycle_series_sync);
+    QMenu * syncMenu = new QMenu(radiant_toolbar);
+    act_sync_cycle_header = syncMenu->addAction(QString("Sincronização de séries: Automática [Auto] (F5)"));
+    connect(act_sync_cycle_header, &QAction::triggered, this, &RadiantShortcutsManager::cycle_series_sync);
+    syncMenu->addSeparator();
+
+    act_sync_slice_pos = syncMenu->addAction(QString("Sincronizar posição do corte (slice)"));
+    act_sync_slice_pos->setCheckable(true);
+    act_sync_slice_pos->setChecked(true);
+    connect(act_sync_slice_pos, &QAction::toggled, [this](bool c) {
+        if (mw && mw->studyview) mw->studyview->set_sync_slice_position(c);
+    });
+
+    act_sync_zoom_pan = syncMenu->addAction(QString("Sincronizar zoom e pan"));
+    act_sync_zoom_pan->setCheckable(true);
+    act_sync_zoom_pan->setChecked(true);
+    connect(act_sync_zoom_pan, &QAction::toggled, [this](bool c) {
+        if (mw && mw->studyview) mw->studyview->set_sync_zoom_pan(c);
+    });
+
+    act_sync_window = syncMenu->addAction(QString("Sincronizar configurações de janela (WL/WW)"));
+    act_sync_window->setCheckable(true);
+    act_sync_window->setChecked(false);
+    connect(act_sync_window, &QAction::toggled, [this](bool c) {
+        if (mw && mw->studyview) mw->studyview->set_sync_window_settings(c);
+    });
+
+    createMenuButton(action_sync_series, syncMenu, false);
 
     // 6. Ícone de Letra ("A")
     action_text_overlay = new QAction(QIcon(":/bitmaps/radiant_text_overlay.svg"), QString("Anotações de Texto / HUD (F12)"), this);
@@ -224,16 +295,13 @@ void RadiantShortcutsManager::create_radiant_toolbar(QToolBar * parentToolbar)
     // 7. Funções dos botões do mouse & ordenação
     action_mouse_config = new QAction(QIcon(":/bitmaps/radiant_mouse.svg"), QString("Funções do Mouse e Ordenação"), this);
     QMenu * mouseMenu = new QMenu(radiant_toolbar);
-    mouseMenu->addAction(QString("Botão Esquerdo: Ação da Ferramenta Ativa"));
-    mouseMenu->addAction(QString("Botão do Meio (Scroll): Janelamento WL / WW"));
-    mouseMenu->addAction(QString("Botão Direito: Zoom Contínuo"));
-    mouseMenu->addAction(QString("Roda do Mouse: Navegar Fatias"));
+    mouseMenu->addAction(QString("Botão Esquerdo: Ação da Ferramenta Ativa"))->setEnabled(false);
+    mouseMenu->addAction(QString("Botão do Meio (Scroll): Janelamento WL / WW"))->setEnabled(false);
+    mouseMenu->addAction(QString("Botão Direito: Zoom Contínuo"))->setEnabled(false);
+    mouseMenu->addAction(QString("Roda do Mouse: Navegar Fatias"))->setEnabled(false);
     mouseMenu->addSeparator();
-    QMenu * sortMenu = mouseMenu->addMenu(QString("Ordenação das Imagens"));
-    sortMenu->addAction(QString("Número da Instância (Instance Number)"))->setCheckable(true);
-    sortMenu->addAction(QString("Posição Espacial (Spatial Position)"))->setChecked(true);
-    sortMenu->addAction(QString("Horário de Aquisição (Acquisition Time)"));
-    sortMenu->addAction(QString("Nome do Arquivo (File Name)"));
+    QMenu * sortMenu = mouseMenu->addMenu(QString("Ordenação das Imagens - indisponível"));
+    sortMenu->setEnabled(false);
     createMenuButton(action_mouse_config, mouseMenu, true);
 
     radiant_toolbar->addSeparator();
@@ -341,7 +409,7 @@ void RadiantShortcutsManager::create_radiant_toolbar(QToolBar * parentToolbar)
     createMenuButton(action_transform, transformMenu, true);
 
     // 14. Modo Cine
-    action_cine = new QAction(QIcon(":/bitmaps/radiant_cine.svg"), QString("Modo Cine (Espaço)"), this);
+    action_cine = new QAction(QIcon(":/bitmaps/radiant_cine_camera.svg"), QString("Modo Cine (Espaço)"), this);
     action_cine->setCheckable(true);
     connect(action_cine, SIGNAL(triggered()), this, SLOT(toggle_cine()));
 
@@ -363,9 +431,30 @@ void RadiantShortcutsManager::create_radiant_toolbar(QToolBar * parentToolbar)
     radiant_toolbar->addSeparator();
 
     // 15. MPR (Multiplanar)
-    action_mpr = new QAction(QIcon(":/bitmaps/radiant_mpr.svg"), QString("MPR - Reformatação Multiplanar"), this);
+    action_mpr = new QAction(QIcon(":/bitmaps/radiant_mpr_label.svg"), QString("MPR (F2)"), this);
     connect(action_mpr, SIGNAL(triggered()), this, SLOT(trigger_mpr_window()));
-    radiant_toolbar->addAction(action_mpr);
+    QMenu * mprMenu = new QMenu(radiant_toolbar);
+    QAction * oblique = mprMenu->addAction(QString::fromUtf8("Abrir MPR oblíquo"));
+    connect(oblique, &QAction::triggered, this, [this]() {
+        if (!mpr_window || !mpr_window->isVisible()) trigger_mpr_window();
+        else { mpr_window->raise(); mpr_window->activateWindow(); }
+    });
+    mprMenu->addSeparator();
+    auto addPlane = [this, mprMenu](const QString & label, QAction * plane, int key) {
+        QAction * item = mprMenu->addAction(label);
+        item->setShortcut(QKeySequence(Qt::CTRL + Qt::ALT + key));
+        item->setShortcutContext(Qt::WindowShortcut);
+        mw->addAction(item);
+        connect(item, &QAction::triggered, [plane]() { if (plane) plane->setChecked(true); });
+    };
+    addPlane(QString("Coronal"), mw->graphicsAct_Y, Qt::Key_1);
+    addPlane(QString("Sagital"), mw->graphicsAct_X, Qt::Key_2);
+    addPlane(QString("Axial"), mw->graphicsAct_Z, Qt::Key_3);
+    mprMenu->addSeparator();
+    mprMenu->addAction(mw->zyxAct);
+    createMenuButton(action_mpr, mprMenu, false);
+    setup_shortcut(QKeySequence(Qt::Key_F2), SLOT(trigger_mpr_window()), false);
+    radiant_toolbar->addAction(mw->histogramAct);
 
     // 16. Renderização 3D (Volume Rendering) - Carregamento sob demanda
     action_3d_vr = new QAction(QIcon(":/bitmaps/radiant_3d.svg"), QString("Renderização 3D - Volume Rendering (F3)"), this);
@@ -374,15 +463,45 @@ void RadiantShortcutsManager::create_radiant_toolbar(QToolBar * parentToolbar)
 
     radiant_toolbar->addSeparator();
 
+    // Botão de LUT (Tabelas de cores) na barra superior com menu expandido
+    action_lut = new QAction(QIcon(":/bitmaps/rgb.svg"), QString("Tabela de Cores (LUT)"), this);
+    QMenu * lutMenu = new QMenu(radiant_toolbar);
+    struct LutOption {
+        int id;
+        QString name;
+        QString iconPath;
+    };
+    const std::vector<LutOption> lut_options = {
+        {0, QString("Tons de Cinza (Padrão)"), QString(":/bitmaps/grey0.png")},
+        {1, QString("Hot metal 768"), QString(":/bitmaps/lut1.png")},
+        {2, QString("RainbowB 1536"), QString(":/bitmaps/lut2.png")},
+        {3, QString("Syngo 1792"), QString(":/bitmaps/lut3.png")},
+        {4, QString("Hot iron"), QString(":/bitmaps/lut4.png")},
+        {5, QString("Hot metal blue"), QString(":/bitmaps/lut5.png")},
+        {6, QString("PET"), QString(":/bitmaps/lut6.png")},
+        {7, QString("PET 20 steps"), QString(":/bitmaps/lut7.png")},
+        {8, QString("Labels 4096"), QString(":/bitmaps/label.png")}
+    };
+    for (const auto & opt : lut_options) {
+        QAction * optAct = lutMenu->addAction(QIcon(opt.iconPath), opt.name);
+        connect(optAct, &QAction::triggered, [this, id = opt.id]() {
+            if (mw) {
+                if (mw->aliza) mw->aliza->set_lut(id);
+                if (mw->studyview) mw->studyview->set_lut(id);
+                if (mw->get_lut_widget()) mw->get_lut_widget()->set_lut(id);
+            }
+        });
+    }
+    createMenuButton(action_lut, lutMenu, true);
+    radiant_toolbar->addSeparator();
+
     // 17. Metadados DICOM
     action_dicom_meta = new QAction(QIcon(":/bitmaps/meta.svg"), QString("Metadados DICOM"), this);
     connect(action_dicom_meta, SIGNAL(triggered()), this, SLOT(trigger_dicom_metadata()));
-    radiant_toolbar->addAction(action_dicom_meta);
 
     // 18. Ajuda
     action_help = new QAction(QIcon(":/bitmaps/radiant_help.svg"), QString("Ajuda e Guia do Usuário"), this);
     connect(action_help, SIGNAL(triggered()), this, SLOT(trigger_help_dialog()));
-    radiant_toolbar->addAction(action_help);
 
     // 19. Configuração
     action_config = new QAction(QIcon(":/bitmaps/radiant_config.svg"), QString("Configurações do Sistema"), this);
@@ -390,6 +509,27 @@ void RadiantShortcutsManager::create_radiant_toolbar(QToolBar * parentToolbar)
     QMenu * configMenu = new QMenu(radiant_toolbar);
     configMenu->addAction(QString("Configurações Gerais..."), this, SLOT(trigger_config_dialog()));
     configMenu->addAction(QString("Configurações Avançadas do Sistema..."), this, SLOT(trigger_settings_tab()));
+    configMenu->addSeparator();
+    QMenu * referenceMenu = configMenu->addMenu(QString("Linhas de referência"));
+    QActionGroup * referenceGroup = new QActionGroup(referenceMenu);
+    referenceGroup->setExclusive(true);
+    auto addReferenceMode = [this, referenceMenu, referenceGroup](const QString & label, int mode) {
+        QAction * item = referenceMenu->addAction(label);
+        item->setCheckable(true);
+        item->setChecked(mode == 0);
+        referenceGroup->addAction(item);
+        connect(item, &QAction::triggered, [this, mode]() {
+            if (mw && mw->aliza) mw->aliza->set_reference_mode(mode);
+        });
+    };
+    addReferenceMode(QString::fromUtf8("Ocultar linhas de referência"), -1);
+    referenceMenu->addSeparator();
+    addReferenceMode(QString("Corte atual"), 0);
+    addReferenceMode(QString("Início e fim"), 1);
+    addReferenceMode(QString("Todos os cortes"), 2);
+    configMenu->addSeparator();
+    configMenu->addAction(action_dicom_meta);
+    configMenu->addAction(action_help);
     createMenuButton(action_config, configMenu, false);
 
     // Default active tool: Browse
@@ -449,7 +589,7 @@ void RadiantShortcutsManager::trigger_pacs_download()
 {
     if (mw)
     {
-        mw->toggle_browser();
+        openPacsDialog(mw);
     }
 }
 
@@ -785,32 +925,20 @@ void RadiantShortcutsManager::prev_panel()
 
 void RadiantShortcutsManager::toggle_cine()
 {
-    if (cine_timer_id != 0)
-    {
-        mw->killTimer(cine_timer_id);
-        cine_timer_id = 0;
-        if (action_cine) action_cine->setChecked(false);
+    if (!cine_timer) {
+        cine_timer = new QTimer(this);
+        connect(cine_timer, &QTimer::timeout, this, &RadiantShortcutsManager::next_image);
     }
-    else
-    {
-        if (action_cine) action_cine->setChecked(true);
-        const int intervalMs = 1000 / current_fps;
-        QTimer * timer = new QTimer(this);
-        connect(timer, &QTimer::timeout, [this, timer]() {
-            if (!this->action_cine || !this->action_cine->isChecked()) {
-                timer->stop();
-                timer->deleteLater();
-                return;
-            }
-            this->next_image();
-        });
-        timer->start(intervalMs);
-    }
+    if (cine_timer->isActive()) cine_timer->stop();
+    else cine_timer->start(qMax(1, 1000 / current_fps));
+    if (action_cine) action_cine->setChecked(cine_timer->isActive());
 }
 
 void RadiantShortcutsManager::set_cine_fps(int fps)
 {
+    if (fps <= 0) return;
     current_fps = fps;
+    if (cine_timer && cine_timer->isActive()) cine_timer->setInterval(qMax(1, 1000 / fps));
 }
 
 // Zoom & Pan
@@ -907,7 +1035,7 @@ void RadiantShortcutsManager::clear_geometric_transforms()
 {
     if (mw && mw->graphicswidget_m && mw->graphicswidget_m->graphicsview)
     {
-        mw->graphicswidget_m->graphicsview->resetTransform();
+        mw->graphicswidget_m->graphicsview->reset_transformations();
         mw->graphicswidget_m->graphicsview->reset_zoom();
     }
 }
@@ -949,19 +1077,20 @@ void RadiantShortcutsManager::toggle_series_sync()
 // MPR & 3D Overlaid Windows
 void RadiantShortcutsManager::trigger_mpr_window()
 {
+    if (cine_timer && cine_timer->isActive()) toggle_cine();
     if (!mw) return;
 
     if (!mpr_window)
     {
         mpr_window = new RadiantOverlayWindow(
-            QString("MPR - Reformatação Multiplanar Ortogonal"),
+            QString::fromUtf8("MPR - Reformatação Multiplanar"),
             mw->multi_frame, mw, RadiantOverlayWindow::OverlayType::MPR);
         connect(mpr_window, SIGNAL(window_closed()), this, SLOT(on_mpr_window_closed()));
     }
 
     if (mpr_window->isVisible())
     {
-        mpr_window->hide();
+        mpr_window->close();
     }
     else
     {
@@ -982,35 +1111,59 @@ void RadiantShortcutsManager::on_mpr_window_closed()
 
 void RadiantShortcutsManager::trigger_3d_vr_window()
 {
-    if (!mw) return;
-
+    if (!mw || !mw->aliza) return;
+    if (!mw->glwidget)
+    {
+        QMessageBox::warning(mw, QString("Visualização 3D"),
+            QString("A visualização 3D não está disponível nesta configuração de OpenGL."));
+        return;
+    }
+    if (!mw->aliza->get_selected_image())
+    {
+        QMessageBox::information(mw, QString("Visualização 3D"),
+            QString("Selecione uma série volumétrica antes de abrir a visualização 3D."));
+        return;
+    }
     if (!vr_3d_window)
     {
         vr_3d_window = new RadiantOverlayWindow(
-            QString("Renderização 3D - Reconstrução Tridimensional (GPU)"),
-            mw->gl_frame, mw, RadiantOverlayWindow::OverlayType::VR_3D);
+            QString("Reconstrução 3D"), mw->gl_frame, mw,
+            RadiantOverlayWindow::OverlayType::VR_3D);
         connect(vr_3d_window, SIGNAL(window_closed()), this, SLOT(on_3d_window_closed()));
     }
-
     if (vr_3d_window->isVisible())
     {
         vr_3d_window->hide();
+        on_3d_window_closed();
+        return;
     }
-    else
+    // Showing the widget creates its OpenGL context before allocating textures.
+    vr_3d_window->show();
+    qApp->processEvents();
+    if (!mw->aliza->prepare_selected_volume_3d())
     {
-        // Lazy load: Show 3D and initialize volume rendering
-        mw->toggle_showgl(true);
-        vr_3d_window->show();
-        vr_3d_window->raise();
-        vr_3d_window->activateWindow();
+        vr_3d_window->hide();
+        QMessageBox::warning(mw, QString("Visualização 3D"),
+            QString("Não foi possível criar o volume 3D desta série. Verifique se é uma série volumétrica compatível e se o OpenGL está disponível."));
+        return;
     }
+    mw->show3DAct->blockSignals(true);
+    mw->show3DAct->setChecked(true);
+    mw->show3DAct->blockSignals(false);
+    mw->aliza->update_selection();
+    mw->raycastAct->setChecked(true);
+    mw->set_view_rc(true);
+    vr_3d_window->raise();
+    vr_3d_window->activateWindow();
 }
 
 void RadiantShortcutsManager::on_3d_window_closed()
 {
-    if (mw)
+    if (mw && mw->show3DAct)
     {
-        mw->toggle_showgl(false);
+        mw->show3DAct->blockSignals(true);
+        mw->show3DAct->setChecked(false);
+        mw->show3DAct->blockSignals(false);
     }
 }
 
@@ -1089,3 +1242,89 @@ void RadiantShortcutsManager::mpr3d_rotate() {}
 void RadiantShortcutsManager::mpr3d_roll() {}
 void RadiantShortcutsManager::mpr3d_maximize() {}
 void RadiantShortcutsManager::mpr3d_reset() {}
+
+void RadiantShortcutsManager::cycle_series_sync()
+{
+    if (mw && mw->studyview)
+    {
+        mw->studyview->cycle_sync_mode();
+        update_sync_series_ui();
+    }
+}
+
+void RadiantShortcutsManager::update_sync_series_ui()
+{
+    if (!mw || !mw->studyview || !action_sync_series) return;
+    auto mode = mw->studyview->get_sync_mode();
+    if (mode == StudyViewWidget::SyncModeAuto)
+    {
+        action_sync_series->setIcon(QIcon(":/bitmaps/radiant_sync_auto.svg"));
+        action_sync_series->setText(QString("Sincronização de Séries [Auto]"));
+        action_sync_series->setToolTip(QString("Sincronização de Séries [Automática] (F5)"));
+        if (act_sync_cycle_header) act_sync_cycle_header->setText(QString("Sincronização de séries: Automática [Auto] (F5)"));
+        if (mw->statusBar()) mw->statusBar()->showMessage(QString("Sincronização de séries: Automática [Auto]"), 2000);
+    }
+    else if (mode == StudyViewWidget::SyncModeManual)
+    {
+        action_sync_series->setIcon(QIcon(":/bitmaps/radiant_sync_manual.svg"));
+        action_sync_series->setText(QString("Sincronização de Séries [Manual]"));
+        action_sync_series->setToolTip(QString("Sincronização de Séries [Manual] (F5)"));
+        if (act_sync_cycle_header) act_sync_cycle_header->setText(QString("Sincronização de séries: Manual [Manual] (F5)"));
+        if (mw->statusBar()) mw->statusBar()->showMessage(QString("Sincronização de séries: Manual [Manual]"), 2000);
+    }
+    else
+    {
+        action_sync_series->setIcon(QIcon(":/bitmaps/radiant_sync_off.svg"));
+        action_sync_series->setText(QString("Sincronização de Séries [Desligada]"));
+        action_sync_series->setToolTip(QString("Sincronização de Séries [Desligada] (F5)"));
+        if (act_sync_cycle_header) act_sync_cycle_header->setText(QString("Sincronização de séries: Desligada (F5)"));
+        if (mw->statusBar()) mw->statusBar()->showMessage(QString("Sincronização de séries: Desligada"), 2000);
+    }
+}
+
+void RadiantShortcutsManager::copy_active_image_to_clipboard()
+{
+    if (!mw) return;
+    QWidget * target = nullptr;
+
+    // Check Multi-view / StudyView first
+    if (mw->studyview && (mw->studyview->isVisible() || (mw->tabWidget && mw->tabWidget->currentIndex() == 1)))
+    {
+        int active_id = mw->studyview->get_active_id();
+        for (StudyFrameWidget * f : mw->studyview->widgets)
+        {
+            if (f && f->graphicswidget && f->graphicswidget->get_id() == active_id && f->isVisible())
+            {
+                if (f->graphicswidget->graphicsview && f->graphicswidget->graphicsview->viewport())
+                {
+                    target = f->graphicswidget->graphicsview->viewport();
+                }
+                break;
+            }
+        }
+    }
+
+    // Check Single 2D View
+    if (!target && mw->graphicswidget_m && mw->graphicswidget_m->isVisible())
+    {
+        if (mw->graphicswidget_m->graphicsview && mw->graphicswidget_m->graphicsview->viewport())
+        {
+            target = mw->graphicswidget_m->graphicsview->viewport();
+        }
+    }
+
+    if (target)
+    {
+        QPixmap pix = target->grab();
+        if (!pix.isNull())
+        {
+            QClipboard * cb = QApplication::clipboard();
+            cb->setPixmap(pix);
+            cb->setImage(pix.toImage());
+            if (mw->statusBar())
+            {
+                mw->statusBar()->showMessage(QString("Imagem copiada para a área de transferência"), 2500);
+            }
+        }
+    }
+}

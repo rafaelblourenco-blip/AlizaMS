@@ -10,6 +10,7 @@ ToolBox2D::ToolBox2D(float si)
 	resetlevel_pushButton->setIconSize(s1);
 	maxwin_pushButton->setIconSize(s1);
 	lock_pushButton->setIconSize(s2);
+	lock_pushButton->hide();
 	set_style_sheet();
 	red   = QPixmap(QString(":/bitmaps/red.png"));
 	green = QPixmap(QString(":/bitmaps/green.png"));

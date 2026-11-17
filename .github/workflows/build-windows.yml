@@ -193,7 +193,14 @@ jobs:
         Copy-Item -LiteralPath "GUI/dark_radiant.qss" -Destination $distDir
         windeployqt (Join-Path $distDir "aliza.exe") --no-translations --compiler-runtime
         if ($LASTEXITCODE -ne 0) { throw "windeployqt falhou (codigo $LASTEXITCODE)" }
-        foreach ($required in @("aliza.exe", "alizams.exe", "dark_radiant.qss", "Qt5Core.dll", "platforms/qwindows.dll")) {
+        # Empacotar runtime cliente PACS DICOM
+        $pacsDist = Join-Path $distDir "pacs"
+        New-Item -ItemType Directory -Path $pacsDist | Out-Null
+        Copy-Item -LiteralPath "pacs/pacs_worker.py" -Destination $pacsDist
+        python -m venv "$pacsDist" --system-site-packages
+        & "$pacsDist/Scripts/pip.exe" install pydicom pynetdicom
+        Copy-Item -Path "$pacsDist/Scripts/python.exe" -Destination "$pacsDist/python.exe"
+        foreach ($required in @("aliza.exe", "alizams.exe", "dark_radiant.qss", "Qt5Core.dll", "platforms/qwindows.dll", "pacs/pacs_worker.py", "pacs/python.exe")) {
             if (-not (Test-Path -LiteralPath (Join-Path $distDir $required) -PathType Leaf)) {
                 throw "Arquivo obrigatorio ausente na distribuicao: $required"
             }

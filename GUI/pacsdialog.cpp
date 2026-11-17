@@ -21,6 +21,7 @@
 #include <QPushButton>
 #include <QSettings>
 #include <QSpinBox>
+#include <QStandardPaths>
 #include <QTableWidget>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -28,8 +29,18 @@
 namespace {
 QJsonObject runWorker(QWidget *parent, const QJsonObject &request)
 {
-    const QString base = QCoreApplication::applicationDirPath() + QStringLiteral("/pacs/");
-    const QString python = base + QStringLiteral("python.exe"), worker = base + QStringLiteral("pacs_worker.py");
+    QString base = QCoreApplication::applicationDirPath() + QStringLiteral("/pacs/");
+    QString worker = base + QStringLiteral("pacs_worker.py");
+    if (!QFile::exists(worker)) {
+        QString altWorker = QCoreApplication::applicationDirPath() + QStringLiteral("/pacs_worker.py");
+        if (QFile::exists(altWorker)) worker = altWorker;
+    }
+    QString python = base + QStringLiteral("python.exe");
+    if (!QFile::exists(python)) {
+        QString sysPython = QStandardPaths::findExecutable(QStringLiteral("python"));
+        if (sysPython.isEmpty()) sysPython = QStandardPaths::findExecutable(QStringLiteral("python3"));
+        if (!sysPython.isEmpty()) python = sysPython;
+    }
     if (!QFile::exists(python) || !QFile::exists(worker))
         return {{QStringLiteral("ok"), false}, {QStringLiteral("message"), QString::fromUtf8("Cliente PACS indisponível: componentes de rede não foram instalados.")}};
     QProcess process;

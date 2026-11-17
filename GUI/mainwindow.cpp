@@ -314,10 +314,30 @@ MainWindow::MainWindow(
 	vl196->setSpacing(0);
 	vl196->addWidget(anonymizer);
 	//
+	// Header com título e botão fechar para a Janela de Configurações Avançadas
+	QWidget *settingsHeader = new QWidget(settings_frame);
+	QHBoxLayout *headerLayout = new QHBoxLayout(settingsHeader);
+	headerLayout->setContentsMargins(5,5,5,5);
+	headerLayout->setSpacing(5);
+	QLabel *headerTitle = new QLabel(tr("Configurações Avançadas do Sistema"), settingsHeader);
+	headerTitle->setStyleSheet("color: #FFFFFF; font-weight: bold;");
+	QPushButton *closeBtn = new QPushButton(QStringLiteral("✕"), settingsHeader);
+	closeBtn->setFixedSize(24,24);
+	closeBtn->setStyleSheet("QPushButton { border:none; color:#CCCCCC; background:transparent; }"
+		"QPushButton:hover { color:#FF5555; }");
+	QObject::connect(closeBtn, &QPushButton::clicked, [this]() {
+		tabWidget->setCurrentIndex(0);
+	});
+	headerLayout->addWidget(headerTitle);
+	headerLayout->addStretch();
+	headerLayout->addWidget(closeBtn);
+	settingsHeader->setLayout(headerLayout);
+
 	settingswidget = new SettingsWidget(scale_icons);
 	QVBoxLayout * vl496 = new QVBoxLayout(settings_frame);
 	vl496->setContentsMargins(0, 0, 0, 0);
 	vl496->setSpacing(0);
+	vl496->addWidget(settingsHeader);
 	vl496->addWidget(settingswidget);
 	//
 	if (ok3d)

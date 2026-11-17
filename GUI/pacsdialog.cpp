@@ -131,8 +131,9 @@ ModalityCheckCombo::ModalityCheckCombo(QWidget *parent)
         "border: 1px solid #94A3B8; border-radius: 4px; } "
         "QComboBox:hover { border-color: #0284C7; } "
         "QComboBox::drop-down { border: none; width: 20px; } "
-        "QComboBox QAbstractItemView { background-color: #FFFFFF; color: #1E293B; "
-        "selection-background-color: #E2E8F0; selection-color: #0F172A; border: 1px solid #94A3B8; }"));
+        "QComboBox QAbstractItemView { background-color: #212B35; color: #FFFFFF; "
+        "selection-background-color: #2C3A48; selection-color: #FFFFFF; border: 1px solid #94A3B8; } "
+        "QComboBox QAbstractItemView::item { border: 2px solid #FFFFFF; border-radius: 2px; margin: 2px; padding: 4px; }"));
 
     m_model = new QStandardItemModel(this);
     setModel(m_model);

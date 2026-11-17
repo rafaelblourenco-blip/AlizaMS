@@ -126,14 +126,16 @@ ModalityCheckCombo::ModalityCheckCombo(QWidget *parent)
     : QComboBox(parent)
 {
     setMinimumWidth(110);
+    // Fundo escuro herdado do dialog; borda branca nos itens do dropdown para destacar o checkbox
     setStyleSheet(QStringLiteral(
-        "QComboBox { background-color: #FFFFFF; color: #1E293B; font-weight: 500; padding: 3px 6px; "
-        "border: 1px solid #94A3B8; border-radius: 4px; } "
+        "QComboBox { background-color: #0F1B2D; color: #E2E8F0; font-weight: 500; padding: 3px 6px; "
+        "border: 1px solid #334155; border-radius: 4px; } "
         "QComboBox:hover { border-color: #0284C7; } "
         "QComboBox::drop-down { border: none; width: 20px; } "
-        "QComboBox QAbstractItemView { background-color: #212B35; color: #FFFFFF; "
-        "selection-background-color: #2C3A48; selection-color: #FFFFFF; border: 1px solid #94A3B8; } "
-        "QComboBox QAbstractItemView::item { border: 2px solid #FFFFFF; border-radius: 2px; margin: 2px; padding: 4px; }"));
+        "QComboBox QAbstractItemView { background-color: #0F1B2D; color: #E2E8F0; "
+        "selection-background-color: #1E3A5F; selection-color: #FFFFFF; border: 1px solid #334155; outline: none; } "
+        "QComboBox QAbstractItemView::item { border: 1px solid #FFFFFF; border-radius: 2px; margin: 2px 4px; padding: 3px 4px; } "
+        "QComboBox QAbstractItemView::item:selected { background-color: #1E3A5F; }"));
 
     m_model = new QStandardItemModel(this);
     setModel(m_model);
@@ -219,7 +221,7 @@ void ModalityCheckCombo::updateLabel()
     if (!isEditable()) {
         setEditable(true);
         lineEdit()->setReadOnly(true);
-        lineEdit()->setStyleSheet(QStringLiteral("QLineEdit { background: transparent; border: none; color: #1E293B; font-weight: 500; }"));
+        lineEdit()->setStyleSheet(QStringLiteral("QLineEdit { background: transparent; border: none; color: #E2E8F0; font-weight: 500; }"));
         setEditText(label);
     }
 }

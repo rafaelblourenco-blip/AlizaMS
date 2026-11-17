@@ -118,9 +118,13 @@ def execute(req):
             # Modality filter
             mod = req.get('modality', '').strip().upper()
             mods_req = [m.strip().upper() for m in req.get('modalities', []) if m.strip()]
-            if mod and mod != 'ALL' and mod != 'TODAS':
-                q.ModalitiesInStudy = mod
+            # Determine the effective list of modalities requested
+            effective_mods = mods_req if mods_req else ([mod] if mod and mod not in ('ALL', 'TODAS') else [])
+            if len(effective_mods) == 1:
+                # Send single modality server-side (most PACSes support this)
+                q.ModalitiesInStudy = effective_mods[0]
             else:
+                # For multiple modalities or "all", leave blank and filter client-side
                 q.ModalitiesInStudy = ''
 
             # Study Description
@@ -165,14 +169,11 @@ def execute(req):
                         'NumberOfStudyRelatedSeries': str(getattr(ds, 'NumberOfStudyRelatedSeries', '')),
                         'NumberOfStudyRelatedInstances': str(getattr(ds, 'NumberOfStudyRelatedInstances', ''))
                     }
-                    # Filter client-side if PACS doesn't support server-side modality filtering
-                    mods_in_st = st_data['ModalitiesInStudy']
-                    if mods_req:
-                        # Check if any requested modality matches
-                        if mods_in_st and not any(m in mods_in_st for m in mods_req):
-                            continue
-                    elif mod and mod not in ('ALL', 'TODAS'):
-                        if mods_in_st and mod not in mods_in_st:
+                    # Filter client-side for multi-modality or when PACS ignores ModalitiesInStudy
+                    mods_in_st = st_data['ModalitiesInStudy'].upper()
+                    if effective_mods:
+                        # Allow if ModalitiesInStudy is empty (PACS didn't return it) OR any modality matches
+                        if mods_in_st and not any(m in mods_in_st for m in effective_mods):
                             continue
                     studies.append(st_data)
                 elif status.Status == 0:

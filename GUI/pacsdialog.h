@@ -41,7 +41,7 @@ private:
 // -------------------------------------------------------------------------
 // ModalityCheckCombo: ComboBox com lista de checkboxes para modalidades
 // -------------------------------------------------------------------------
-class ModalityCheckCombo : public QToolButton
+class ModalityCheckCombo : public QComboBox
 {
     Q_OBJECT
 public:
@@ -52,13 +52,16 @@ public:
 signals:
     void selectionChanged();
 
+protected:
+    void hidePopup() override;
+
 private slots:
-    void showPopup();
-    void onItemChanged();
+    void onItemChanged(class QStandardItem *item);
 
 private:
-    QListWidget *m_list{nullptr};
+    class QStandardItemModel *m_model{nullptr};
     void updateLabel();
+    bool m_updating{false};
 };
 
 class PacsQueryRetrieveDialog : public QDialog

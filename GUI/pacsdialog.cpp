@@ -37,6 +37,8 @@
 #include <QAction>
 #include <QScrollBar>
 #include <QCalendarWidget>
+#include <QStandardItemModel>
+#include <QListView>
 
 // =========================================================================
 // PacsCacheManager: Gestão do Cache Volátil
@@ -77,19 +79,21 @@ void PacsCacheManager::cleanupOtherCaches(const QString & exceptDir)
     const QString root = getCacheRoot();
     QDir dir(root);
     if (!dir.exists()) return;
+    const QString cleanExcept = exceptDir.isEmpty() ? QString() : QDir::cleanPath(exceptDir);
     const QStringList subdirs = dir.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
     for (const QString & sub : subdirs)
     {
-        const QString subPath = dir.absoluteFilePath(sub);
-        if (!exceptDir.isEmpty() && (subPath == exceptDir || exceptDir.startsWith(subPath)))
+        const QString subPath = QDir::cleanPath(dir.absoluteFilePath(sub));
+        if (!cleanExcept.isEmpty() && (subPath.compare(cleanExcept, Qt::CaseInsensitive) == 0 ||
+                                       cleanExcept.startsWith(subPath, Qt::CaseInsensitive)))
         {
             continue;
         }
         QDir(subPath).removeRecursively();
     }
-    if (s_currentCacheDir != exceptDir)
+    if (s_currentCacheDir != cleanExcept)
     {
-        s_currentCacheDir = exceptDir;
+        s_currentCacheDir = cleanExcept;
     }
 }
 
@@ -115,60 +119,85 @@ void PacsCacheManager::setCurrentCacheDir(const QString &dir)
 }
 
 // =========================================================================
-// ModalityCheckCombo: Botão com popup de checkboxes de modalidades
+// ModalityCheckCombo: ComboBox com lista de checkboxes para modalidades
 // =========================================================================
 
 ModalityCheckCombo::ModalityCheckCombo(QWidget *parent)
-    : QToolButton(parent)
+    : QComboBox(parent)
 {
-    setPopupMode(QToolButton::InstantPopup);
-    setToolButtonStyle(Qt::ToolButtonTextOnly);
+    setMinimumWidth(110);
     setStyleSheet(QStringLiteral(
-        "QToolButton { min-width:110px; padding: 2px 18px 2px 6px; "
-        "border: 1px solid #555; border-radius: 3px; text-align: left; }"
-        "QToolButton::menu-indicator { image: none; }"
-        "QToolButton:hover { border-color: #0284C7; }"));
+        "QComboBox { background-color: #FFFFFF; color: #1E293B; font-weight: 500; padding: 3px 6px; "
+        "border: 1px solid #94A3B8; border-radius: 4px; } "
+        "QComboBox:hover { border-color: #0284C7; } "
+        "QComboBox::drop-down { border: none; width: 20px; } "
+        "QComboBox QAbstractItemView { background-color: #FFFFFF; color: #1E293B; "
+        "selection-background-color: #E2E8F0; selection-color: #0F172A; border: 1px solid #94A3B8; }"));
 
-    m_list = new QListWidget(this);
-    m_list->setWindowFlags(Qt::Popup);
-    m_list->setFrameShape(QFrame::StyledPanel);
-    m_list->setMinimumWidth(160);
-    m_list->setMaximumHeight(360);
+    m_model = new QStandardItemModel(this);
+    setModel(m_model);
 
-    // "Todas as modalidades" como item especial (sem checkbox, header)
-    QListWidgetItem *allItem = new QListWidgetItem(QString::fromUtf8("Todas as modalidades"), m_list);
+    // Visualizador com suporte nativo a checkboxes no dropdown
+    QListView *listView = new QListView(this);
+    setView(listView);
+
+    // "Todas as modalidades"
+    QStandardItem *allItem = new QStandardItem(QString::fromUtf8("Todas as modalidades"));
+    allItem->setCheckable(true);
     allItem->setCheckState(Qt::Checked);
-    allItem->setData(Qt::UserRole, QStringLiteral("ALL"));
-
-    QListWidgetItem *sep = new QListWidgetItem(QString::fromUtf8("─────────────────"), m_list);
-    sep->setFlags(Qt::NoItemFlags);
+    allItem->setData(QStringLiteral("ALL"), Qt::UserRole);
+    m_model->appendRow(allItem);
 
     const QStringList modalities = {
         "CR","DX","CT","MR","XA","MG","US","PT","NM","RF","RG","PX","ES","XC","GM","SC","OT","SR"
     };
     for (const QString &m : modalities) {
-        QListWidgetItem *item = new QListWidgetItem(m, m_list);
+        QStandardItem *item = new QStandardItem(m);
+        item->setCheckable(true);
         item->setCheckState(Qt::Unchecked);
-        item->setData(Qt::UserRole, m);
+        item->setData(m, Qt::UserRole);
+        m_model->appendRow(item);
     }
 
-    connect(m_list, &QListWidget::itemChanged, this, &ModalityCheckCombo::onItemChanged);
-    connect(this, &QToolButton::clicked, this, &ModalityCheckCombo::showPopup);
-
+    connect(m_model, &QStandardItemModel::itemChanged, this, &ModalityCheckCombo::onItemChanged);
     updateLabel();
 }
 
-void ModalityCheckCombo::showPopup()
+void ModalityCheckCombo::hidePopup()
 {
-    const QPoint globalPos = mapToGlobal(QPoint(0, height()));
-    m_list->move(globalPos);
-    m_list->resize(qMax(width(), m_list->minimumWidth()), m_list->sizeHintForRow(0) * qMin(m_list->count(), 20) + 4);
-    m_list->show();
-    m_list->raise();
+    QComboBox::hidePopup();
 }
 
-void ModalityCheckCombo::onItemChanged()
+void ModalityCheckCombo::onItemChanged(QStandardItem *item)
 {
+    if (m_updating || !item) return;
+    m_updating = true;
+
+    const QString roleData = item->data(Qt::UserRole).toString();
+    if (roleData == QStringLiteral("ALL")) {
+        if (item->checkState() == Qt::Checked) {
+            for (int r = 1; r < m_model->rowCount(); ++r) {
+                m_model->item(r)->setCheckState(Qt::Unchecked);
+            }
+        }
+    } else {
+        if (item->checkState() == Qt::Checked) {
+            m_model->item(0)->setCheckState(Qt::Unchecked);
+        } else {
+            bool anyChecked = false;
+            for (int r = 1; r < m_model->rowCount(); ++r) {
+                if (m_model->item(r)->checkState() == Qt::Checked) {
+                    anyChecked = true;
+                    break;
+                }
+            }
+            if (!anyChecked) {
+                m_model->item(0)->setCheckState(Qt::Checked);
+            }
+        }
+    }
+
+    m_updating = false;
     updateLabel();
     emit selectionChanged();
 }
@@ -176,41 +205,44 @@ void ModalityCheckCombo::onItemChanged()
 void ModalityCheckCombo::updateLabel()
 {
     const QStringList sel = selectedModalities();
+    QString label;
     if (sel.isEmpty()) {
-        setText(QString::fromUtf8("Todas as modalidades ▾"));
+        label = QString::fromUtf8("Todas as modalidades");
     } else if (sel.size() == 1) {
-        setText(sel.first() + QStringLiteral(" ▾"));
+        label = sel.first();
     } else {
-        setText(sel.join(QStringLiteral(",")) + QStringLiteral(" ▾"));
+        label = sel.join(QStringLiteral(","));
+    }
+    // Define o texto exibido no controle principal sem recursão
+    setEditText(label);
+    if (!isEditable()) {
+        setEditable(true);
+        lineEdit()->setReadOnly(true);
+        lineEdit()->setStyleSheet(QStringLiteral("QLineEdit { background: transparent; border: none; color: #1E293B; font-weight: 500; }"));
+        setEditText(label);
     }
 }
 
 QStringList ModalityCheckCombo::selectedModalities() const
 {
     QStringList result;
-    for (int i = 0; i < m_list->count(); ++i) {
-        const QListWidgetItem *item = m_list->item(i);
-        if (!item) continue;
-        const QString data = item->data(Qt::UserRole).toString();
-        if (data == QStringLiteral("ALL") || data.isEmpty()) continue;
-        if (item->checkState() == Qt::Checked)
-            result << data;
+    for (int r = 1; r < m_model->rowCount(); ++r) {
+        const QStandardItem *item = m_model->item(r);
+        if (item && item->checkState() == Qt::Checked) {
+            result << item->data(Qt::UserRole).toString();
+        }
     }
     return result;
 }
 
 void ModalityCheckCombo::clearSelection()
 {
-    QSignalBlocker blocker(m_list);
-    for (int i = 0; i < m_list->count(); ++i) {
-        QListWidgetItem *item = m_list->item(i);
-        if (!item) continue;
-        const QString data = item->data(Qt::UserRole).toString();
-        if (data == QStringLiteral("ALL"))
-            item->setCheckState(Qt::Checked);
-        else if (!data.isEmpty())
-            item->setCheckState(Qt::Unchecked);
+    m_updating = true;
+    m_model->item(0)->setCheckState(Qt::Checked);
+    for (int r = 1; r < m_model->rowCount(); ++r) {
+        m_model->item(r)->setCheckState(Qt::Unchecked);
     }
+    m_updating = false;
     updateLabel();
 }
 
